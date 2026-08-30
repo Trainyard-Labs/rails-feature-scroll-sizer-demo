@@ -40,6 +40,7 @@ type DemoWindow = {
 
 const MIN_WIDTH = 190;
 const MIN_HEIGHT = 128;
+const EDGE_SNAP_DISTANCE = 12;
 const INITIAL_RECT: Rect = { x: 102, y: 72, width: 410, height: 274 };
 const SECONDARY_RECT: Rect = { x: 250, y: 128, width: 360, height: 240 };
 const CORNERS = ['top left', 'top right', 'bottom left', 'bottom right'];
@@ -288,6 +289,12 @@ function resizeFromFixedOpposite(
   if (direction.includes('s')) bottom = Math.min(bounds.height, Math.max(top + MIN_HEIGHT, pointer.y));
 
   return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function snapToPreviewEdge(value: number, maximum: number) {
+  if (value <= EDGE_SNAP_DISTANCE) return 0;
+  if (value >= maximum - EDGE_SNAP_DISTANCE) return maximum;
+  return Math.max(0, Math.min(maximum, value));
 }
 
 export default function Home() {
@@ -700,13 +707,13 @@ export default function Home() {
     return () => window.cancelAnimationFrame(frame);
   }, [getBounds, monitorPreset]);
 
-  const movePointer = (clientX: number, clientY: number) => {
+  const movePointer = useCallback((clientX: number, clientY: number) => {
     const stage = stageRef.current;
     if (!stage) return;
     const stageBounds = stage.getBoundingClientRect();
     const nextPointer = {
-      x: Math.max(0, Math.min(stageBounds.width, clientX - stageBounds.left)),
-      y: Math.max(0, Math.min(stageBounds.height, clientY - stageBounds.top)),
+      x: snapToPreviewEdge(clientX - stageBounds.left, stageBounds.width),
+      y: snapToPreviewEdge(clientY - stageBounds.top, stageBounds.height),
     };
     setPointer(nextPointer);
 
@@ -734,7 +741,14 @@ export default function Home() {
         return { ...window, rect, restoreRect: rect };
       }));
     }
-  };
+  }, [activationMode, activeWindowId, corner, twoClickPhase]);
+
+  useEffect(() => {
+    if (!isActive) return;
+    const trackActivePointer = (event: PointerEvent) => movePointer(event.clientX, event.clientY);
+    window.addEventListener('pointermove', trackActivePointer, true);
+    return () => window.removeEventListener('pointermove', trackActivePointer, true);
+  }, [isActive, movePointer]);
 
   const resizeWithWheel = useCallback((deltaY: number) => {
     if (!activeWindowId) return;
@@ -781,16 +795,15 @@ export default function Home() {
   }, [getBounds]);
 
   useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
+    if (!activeWindowId && !isTitleDragging) return;
     const blockPageScroll = (event: WheelEvent) => {
       event.preventDefault();
       if (activeWindowId && activationMode !== 'two-click') resizeWithWheel(event.deltaY);
       else if (titleDrag.current) resizeTitleDragWithWheel(event.deltaY);
     };
-    stage.addEventListener('wheel', blockPageScroll, { passive: false });
-    return () => stage.removeEventListener('wheel', blockPageScroll);
-  }, [activationMode, activeWindowId, resizeTitleDragWithWheel, resizeWithWheel]);
+    window.addEventListener('wheel', blockPageScroll, { capture: true, passive: false });
+    return () => window.removeEventListener('wheel', blockPageScroll, true);
+  }, [activationMode, activeWindowId, isTitleDragging, resizeTitleDragWithWheel, resizeWithWheel]);
 
   const beginShortcutRecording = () => {
     deactivate();
@@ -1206,7 +1219,9 @@ export default function Home() {
                 ref={stageRef}
                 className={`monitor-stage monitor-${monitorPreset} ${isActive ? 'is-active' : ''}`}
                 style={{ width: containedStageSize.width, height: containedStageSize.height }}
-                onPointerMove={(event) => movePointer(event.clientX, event.clientY)}
+                onPointerMove={(event) => {
+                  if (!isActive) movePointer(event.clientX, event.clientY);
+                }}
               >
                 <div className="desktop-light desktop-light-one" />
                 <div className="desktop-light desktop-light-two" />
