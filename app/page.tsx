@@ -106,6 +106,26 @@ function resizePointerGlyph(direction: ResizeDirection) {
   return <MoveDiagonal2 aria-hidden="true" />;
 }
 
+function ResizeModeOverlay({ axis }: { axis: SequenceAxis }) {
+  return (
+    <div className={`window-resize-mode axis-${axis}`} aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        {axis === 'both' && (
+          <path
+            d="M10.5 10.5 5.5 5.5m0 3.75V5.5h3.75m4.25 8 5 5m-3.75 0h3.75v-3.75m-8-1.25-5 5m0-3.75v3.75h3.75m4.25-8 5-5m-3.75 0h3.75v3.75"
+          />
+        )}
+        {axis === 'horizontal' && (
+          <path d="M10.385 12H5m2.684-2.154L5.53 12l2.154 2.154M13.615 12H19m-2.684-2.154L18.47 12l-2.154 2.154" />
+        )}
+        {axis === 'vertical' && (
+          <path d="M12 10.385V5M9.846 7.684 12 5.53l2.154 2.154M12 13.615V19m-2.154-2.684L12 18.47l2.154-2.154" />
+        )}
+      </svg>
+    </div>
+  );
+}
+
 function normalizeKey(key: string) {
   if (key === 'Control') return 'Ctrl';
   if (key === 'Meta') return 'Win';
@@ -1112,10 +1132,7 @@ export default function Home() {
                       </div>
                       {isGrabbed && <span className={`corner-node corner-${corner}`} />}
                       {isGrabbed && <span className={`corner-ring corner-${corner}`} />}
-                      <svg className="window-diagonals" aria-hidden="true">
-                        <line x1="0" y1="0" x2="100%" y2="100%" />
-                        <line x1="100%" y1="0" x2="0" y2="100%" />
-                      </svg>
+                      <ResizeModeOverlay axis={activationMode === 'sequence' ? sequenceAxis : 'both'} />
                       {demoWindow.mode === 'normal' && RESIZE_DIRECTIONS.map((direction) => (
                         <hr
                           key={direction}

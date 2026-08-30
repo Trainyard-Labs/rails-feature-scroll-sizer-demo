@@ -281,19 +281,23 @@ button, a { -webkit-tap-highlight-color: transparent; }
   border-right: 1px solid rgba(255,255,255,.07);
   background: rgba(0,0,0,.12);
 }
-.window-diagonals {
+.window-resize-mode {
   position: absolute;
-  inset: -1px;
+  inset: 0;
   z-index: 8;
-  width: calc(100% + 2px);
-  height: calc(100% + 2px);
-  overflow: visible;
+  display: grid;
+  place-items: center;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 180ms ease;
+  color: rgba(226,255,241,.7);
+  filter: drop-shadow(0 3px 14px rgba(0,0,0,.72)) drop-shadow(0 0 16px rgba(145,246,196,.16));
+  transition: opacity 180ms ease, transform 180ms cubic-bezier(.2,.8,.2,1);
 }
-.is-grabbed .window-diagonals { opacity: .44; }
-.window-diagonals line { stroke: rgba(255,255,255,.32); stroke-width: 1; stroke-dasharray: 4 8; }
+.window-resize-mode svg { width: clamp(78px, 34%, 172px); height: auto; overflow: visible; }
+.window-resize-mode path { stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.window-resize-mode.axis-horizontal svg { width: clamp(92px, 40%, 200px); }
+.window-resize-mode.axis-vertical svg { width: clamp(78px, 30%, 148px); }
+.is-grabbed .window-resize-mode { opacity: .72; }
 
 .native-resize-handle {
   position: absolute;
