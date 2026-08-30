@@ -27,7 +27,8 @@ type Point = { x: number; y: number };
 type WindowMode = 'normal' | 'maximized' | 'minimized' | 'closed';
 type ResizeDirection = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw';
 type WindowId = 'primary' | 'secondary';
-type ActivationMode = 'hold' | 'toggle';
+type ActivationMode = 'hold' | 'toggle' | 'sequence';
+type SequenceAxis = 'both' | 'horizontal' | 'vertical';
 type MonitorPreset = 'standard' | 'portrait' | 'ultrawide';
 type DemoWindow = {
   id: WindowId;
@@ -64,6 +65,12 @@ const MONITOR_LABELS: Record<MonitorPreset, string> = {
   standard: '16:9 standard',
   portrait: '16:9 portrait',
   ultrawide: 'Ultrawide',
+};
+
+const SEQUENCE_AXIS_LABELS: Record<SequenceAxis, string> = {
+  both: 'Normal',
+  horizontal: 'Horizontal only',
+  vertical: 'Vertical only',
 };
 
 function createWindow(id: WindowId): DemoWindow {
@@ -195,6 +202,7 @@ export default function Home() {
   const [hasInteracted, setHasInteracted] = useState(false);
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [activationMode, setActivationMode] = useState<ActivationMode>('hold');
+  const [sequenceAxis, setSequenceAxis] = useState<SequenceAxis>('both');
   const [monitorPreset, setMonitorPreset] = useState<MonitorPreset>('standard');
   const [isRecording, setIsRecording] = useState(false);
   const [recordingKeys, setRecordingKeys] = useState<string[]>([]);
@@ -273,13 +281,19 @@ export default function Home() {
   const deactivate = useCallback(() => {
     setActiveWindowId(null);
     setWheelDirection(null);
+    setSequenceAxis('both');
+  }, []);
+
+  const cycleSequenceAxis = useCallback(() => {
+    setSequenceAxis((current) => current === 'both' ? 'horizontal' : current === 'horizontal' ? 'vertical' : 'both');
   }, []);
 
   const triggerShortcut = useCallback(() => {
-    if (activationMode === 'toggle' && isActive) {
+    if (activationMode !== 'hold' && isActive) {
       deactivate();
       return;
     }
+    if (activationMode === 'sequence') setSequenceAxis('both');
     activate();
   }, [activate, activationMode, deactivate, isActive]);
 
@@ -309,7 +323,7 @@ export default function Home() {
         window.localStorage.removeItem(SHORTCUT_STORAGE_KEY);
       }
       const savedMode = window.localStorage.getItem(ACTIVATION_MODE_STORAGE_KEY);
-      if (savedMode === 'hold' || savedMode === 'toggle') setActivationMode(savedMode);
+      if (savedMode === 'hold' || savedMode === 'toggle' || savedMode === 'sequence') setActivationMode(savedMode);
       const savedMonitor = window.localStorage.getItem(MONITOR_PRESET_STORAGE_KEY);
       if (savedMonitor === 'standard' || savedMonitor === 'portrait' || savedMonitor === 'ultrawide') setMonitorPreset(savedMonitor);
     });
@@ -406,10 +420,15 @@ export default function Home() {
     };
 
     const onPointerDown = (event: PointerEvent) => {
-      if (event.button === 0 && !isRecording && activationMode === 'toggle' && isActive) {
+      if (event.button === 0 && !isRecording && activationMode !== 'hold' && isActive) {
         consume(event);
         suppressNextClick.current = true;
         deactivate();
+        return;
+      }
+      if (event.button === 2 && !isRecording && activationMode === 'sequence' && isActive) {
+        consume(event);
+        cycleSequenceAxis();
         return;
       }
       const input = mouseButtonInput(event.button);
@@ -466,6 +485,10 @@ export default function Home() {
       consume(event);
     };
 
+    const onContextMenu = (event: MouseEvent) => {
+      if (activationMode === 'sequence' && isActive) consume(event);
+    };
+
     const swallowCompatibilityEvent = (event: MouseEvent) => {
       const input = mouseButtonInput(event.button);
       if (input && (isRecording || shortcut.includes(input))) consume(event);
@@ -477,6 +500,7 @@ export default function Home() {
     window.addEventListener('mouseup', swallowCompatibilityEvent, true);
     window.addEventListener('auxclick', swallowCompatibilityEvent, true);
     window.addEventListener('click', onClick, true);
+    window.addEventListener('contextmenu', onContextMenu, true);
     return () => {
       window.removeEventListener('pointerdown', onPointerDown, true);
       window.removeEventListener('pointerup', onPointerUp, true);
@@ -484,8 +508,9 @@ export default function Home() {
       window.removeEventListener('mouseup', swallowCompatibilityEvent, true);
       window.removeEventListener('auxclick', swallowCompatibilityEvent, true);
       window.removeEventListener('click', onClick, true);
+      window.removeEventListener('contextmenu', onContextMenu, true);
     };
-  }, [activationMode, deactivate, isActive, isRecording, saveShortcut, shortcut, triggerShortcut]);
+  }, [activationMode, cycleSequenceAxis, deactivate, isActive, isRecording, saveShortcut, shortcut, triggerShortcut]);
 
   useEffect(() => {
     const shouldGuardHistory = isRecording || shortcut.includes('MB4');
@@ -572,13 +597,18 @@ export default function Home() {
 
     setWindows((current) => current.map((window) => {
       if (window.id !== activeWindowId) return window;
-      const width = Math.min(bounds.width, Math.max(MIN_WIDTH, window.rect.width * factor));
-      const height = Math.min(bounds.height, Math.max(MIN_HEIGHT, window.rect.height * factor));
+      const activeAxis = activationMode === 'sequence' ? sequenceAxis : 'both';
+      const width = activeAxis === 'vertical'
+        ? window.rect.width
+        : Math.min(bounds.width, Math.max(MIN_WIDTH, window.rect.width * factor));
+      const height = activeAxis === 'horizontal'
+        ? window.rect.height
+        : Math.min(bounds.height, Math.max(MIN_HEIGHT, window.rect.height * factor));
       const position = positionFromGrab(pointer, corner, width, height, bounds);
       const rect = { ...position, width, height };
       return { ...window, rect, restoreRect: rect };
     }));
-  }, [activeWindowId, corner, getBounds, pointer]);
+  }, [activationMode, activeWindowId, corner, getBounds, pointer, sequenceAxis]);
 
   const resizeTitleDragWithWheel = useCallback((deltaY: number) => {
     const dragState = titleDrag.current;
@@ -846,7 +876,9 @@ export default function Home() {
       : isTitleDragging
         ? `Moving ${focusedWindow.title} · wheel enabled`
         : isActive
-          ? `${activationMode === 'toggle' ? 'Toggled on' : 'Holding'} · ${CORNERS[corner]}`
+          ? activationMode === 'sequence'
+            ? `Sequence · ${SEQUENCE_AXIS_LABELS[sequenceAxis]}`
+            : `${activationMode === 'toggle' ? 'Toggled on' : 'Holding'} · ${CORNERS[corner]}`
           : focusedWindow.mode === 'minimized'
             ? `${focusedWindow.title} minimized`
             : focusedWindow.mode === 'closed'
@@ -970,7 +1002,7 @@ export default function Home() {
               <div className="demo-option-group">
                 <span>Activation</span>
                 <div className="demo-segmented">
-                  {(['hold', 'toggle'] as ActivationMode[]).map((mode) => (
+                  {(['hold', 'toggle', 'sequence'] as ActivationMode[]).map((mode) => (
                     <button
                       type="button"
                       key={mode}
@@ -978,7 +1010,7 @@ export default function Home() {
                       className={activationMode === mode ? 'is-selected' : ''}
                       onClick={() => chooseActivationMode(mode)}
                     >
-                      {mode === 'hold' ? 'Hold' : 'Toggle'}
+                      {mode === 'hold' ? 'Hold' : mode === 'toggle' ? 'Toggle' : 'Sequence'}
                     </button>
                   ))}
                 </div>
@@ -1119,7 +1151,15 @@ export default function Home() {
                   ) : (
                     <MousePointer2 className="size-6 fill-[#08100d] text-white" />
                   )}
-                  {isActive && <span className="pointer-label">{activationMode === 'toggle' ? 'active · click to finish' : 'drag + roll'}</span>}
+                  {isActive && (
+                    <span className="pointer-label">
+                      {activationMode === 'sequence'
+                        ? `${SEQUENCE_AXIS_LABELS[sequenceAxis]} · right click cycles`
+                        : activationMode === 'toggle'
+                          ? 'active · click to finish'
+                          : 'drag + roll'}
+                    </span>
+                  )}
                 </div>
 
                 {!hasInteracted && visibleWindows.length > 0 && <div className="stage-hint">Click a window to focus · pull an edge or use the activator and roll</div>}
@@ -1154,13 +1194,14 @@ export default function Home() {
                 <Metric label="Title" value={focusedWindow.title} />
                 <Metric label="Window" value={focusedWindowVisible ? `${Math.round(focusedWindow.rect.width)} × ${Math.round(focusedWindow.rect.height)}` : focusedWindow.mode === 'minimized' ? 'Minimized' : 'Closed'} suffix={focusedWindowVisible ? 'px' : undefined} />
                 <Metric label="Aspect ratio" value={ratioLabel} />
+                {activationMode === 'sequence' && <Metric label="Sequence axis" value={SEQUENCE_AXIS_LABELS[sequenceAxis]} accent={isActive} />}
                 <Metric label="Limit state" value={lockLabel} accent={widthLocked || heightLocked} />
               </div>
               <div className="my-6 h-px bg-white/8" />
               <ol className="space-y-4 text-sm">
                 <Instruction active={!isActive && !hasInteracted} number="01" title="Focus" detail="Click the window you want Scroll Sizer to control." />
-                <Instruction active={isActive && !wheelDirection} number="02" title={activationMode === 'hold' ? 'Hold + drag' : 'Toggle + drag'} detail="The focused window follows at its current size." />
-                <Instruction active={Boolean(wheelDirection)} number="03" title="Roll" detail="Up grows. Down shrinks at the live ratio." />
+                <Instruction active={isActive && !wheelDirection} number="02" title={activationMode === 'hold' ? 'Hold + drag' : activationMode === 'toggle' ? 'Toggle + drag' : 'Sequence + drag'} detail={activationMode === 'sequence' ? 'Right-click cycles normal, horizontal-only, and vertical-only resizing.' : 'The focused window follows at its current size.'} />
+                <Instruction active={Boolean(wheelDirection)} number="03" title="Roll" detail={activationMode === 'sequence' && sequenceAxis !== 'both' ? `The wheel changes the ${sequenceAxis} dimension only.` : 'Up grows. Down shrinks at the live ratio.'} />
               </ol>
               <div className={`wheel-readout ${isActive || isTitleDragging ? 'is-ready' : ''}`}>
                 <ArrowUp className={wheelDirection === 'up' ? 'is-lit' : ''} />
