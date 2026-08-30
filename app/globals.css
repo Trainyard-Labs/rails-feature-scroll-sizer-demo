@@ -59,9 +59,11 @@
 }
 
 * { box-sizing: border-box; border-color: var(--border); }
-html { scroll-behavior: smooth; background: var(--background); }
+html { height: 100%; overflow: hidden; scroll-behavior: smooth; background: var(--background); }
 body {
+  height: 100%;
   margin: 0;
+  overflow: hidden;
   background: radial-gradient(circle at 72% -12%, rgba(111, 231, 170, 0.08), transparent 34rem), var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
@@ -157,9 +159,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
 
 .monitor-shell {
   display: flex;
+  height: 100%;
   min-width: 0;
-  align-items: flex-start;
+  min-height: 0;
+  align-items: center;
   justify-content: center;
+  overflow: hidden;
 }
 
 .monitor-stage {
@@ -177,7 +182,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   overscroll-behavior: contain;
   touch-action: none;
 }
-.monitor-stage.monitor-portrait { width: min(100%, 430px); aspect-ratio: 9 / 16; }
+.monitor-stage.monitor-portrait { aspect-ratio: 9 / 16; }
 .monitor-stage.monitor-ultrawide { aspect-ratio: 21 / 9; }
 .monitor-stage::after {
   content: '';
@@ -586,47 +591,6 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .taskbar-app.active { background: rgba(145,246,196,.28); }
 .taskbar-app.active::after { content: ''; position: absolute; left: 4px; right: 4px; bottom: -6px; height: 2px; border-radius: 9px; background: var(--signal); }
 .taskbar-new-window { border: 1px dashed rgba(255,255,255,.18); background: transparent; }
-
-.instruction { display: grid; grid-template-columns: 28px 1fr; gap: 10px; opacity: .4; transition: opacity 180ms ease, transform 180ms ease; }
-.instruction.is-active { opacity: 1; transform: translateX(3px); }
-.instruction > span { padding-top: 2px; color: var(--signal); font-family: var(--font-geist-mono), monospace; font-size: 10px; }
-.instruction strong { display: block; color: rgba(255,255,255,.85); font-size: 13px; font-weight: 600; }
-.instruction p { margin-top: 3px; color: rgba(255,255,255,.4); font-size: 11px; line-height: 1.5; }
-.wheel-readout {
-  display: flex;
-  height: 36px;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 24px;
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 9px;
-  background: rgba(0,0,0,.14);
-  padding: 0 11px;
-  color: rgba(255,255,255,.22);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-}
-.wheel-readout.is-ready { color: rgba(255,255,255,.5); }
-.wheel-readout svg { width: 14px; transition: color 140ms ease, transform 140ms ease; }
-.wheel-readout svg.is-lit { color: var(--signal); transform: scale(1.18); }
-.click-readout { justify-content: center; gap: 9px; letter-spacing: .07em; }
-.click-readout.is-ready {
-  border-color: rgba(145,246,196,.2);
-  background: rgba(145,246,196,.055);
-  color: rgba(226,255,241,.72);
-}
-.click-readout svg { color: var(--signal); }
-.comparison-note {
-  margin-top: 12px;
-  border: 1px solid rgba(255,255,255,.07);
-  border-radius: 9px;
-  background: rgba(255,255,255,.025);
-  padding: 11px 12px;
-}
-.comparison-note strong { display: block; color: rgba(255,255,255,.66); font-size: 10px; font-weight: 600; }
-.comparison-note p { margin-top: 4px; color: rgba(255,255,255,.34); font-size: 9px; line-height: 1.5; }
 
 @keyframes signal-pulse { from { transform: scale(.7); opacity: .9; } to { transform: scale(1.6); opacity: 0; } }
 @keyframes corner-pulse { from { transform: translate(-50%, -50%) scale(.6); opacity: .8; } to { transform: translate(-50%, -50%) scale(1.6); opacity: 0; } }

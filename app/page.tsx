@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowDown,
-  ArrowUp,
   CornerDownRight,
   Keyboard,
   Minus,
@@ -294,14 +292,14 @@ function resizeFromFixedOpposite(
 
 export default function Home() {
   const stageRef = useRef<HTMLDivElement>(null);
+  const monitorShellRef = useRef<HTMLDivElement>(null);
   const [windows, setWindows] = useState<DemoWindow[]>([createWindow('primary')]);
   const [focusedWindowId, setFocusedWindowId] = useState<WindowId>('primary');
   const [activeWindowId, setActiveWindowId] = useState<WindowId | null>(null);
   const [pointer, setPointer] = useState<Point>({ x: 486, y: 324 });
   const [monitorBounds, setMonitorBounds] = useState({ width: 720, height: 430 });
+  const [monitorShellBounds, setMonitorShellBounds] = useState({ width: 720, height: 430 });
   const [corner, setCorner] = useState(3);
-  const [wheelDirection, setWheelDirection] = useState<'up' | 'down' | null>(null);
-  const [hasInteracted, setHasInteracted] = useState(false);
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [activationMode, setActivationMode] = useState<ActivationMode>('hold');
   const [sequenceAxis, setSequenceAxis] = useState<SequenceAxis>('both');
@@ -363,6 +361,16 @@ export default function Home() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    const shell = monitorShellRef.current;
+    if (!shell) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setMonitorShellBounds({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(shell);
+    return () => observer.disconnect();
+  }, []);
+
   const updateWindow = useCallback((windowId: WindowId, updater: (window: DemoWindow) => DemoWindow) => {
     setWindows((current) => current.map((window) => window.id === windowId ? updater(window) : window));
   }, []);
@@ -384,13 +392,11 @@ export default function Home() {
     updateWindow(target.id, (window) => ({ ...window, rect: nextRect, restoreRect: nextRect, mode: 'normal' }));
     setFocusedWindowId(target.id);
     setActiveWindowId(target.id);
-    setHasInteracted(true);
     return true;
   }, [activeWindowId, focusedWindowId, getBounds, pointer, updateWindow, windows]);
 
   const deactivate = useCallback(() => {
     setActiveWindowId(null);
-    setWheelDirection(null);
     setSequenceAxis('both');
     setTwoClickPhase(null);
     setTwoClickDirection(null);
@@ -735,9 +741,6 @@ export default function Home() {
     const bounds = getBounds();
     const growing = deltaY < 0;
     const factor = growing ? 1.1 : 0.9;
-    setWheelDirection(growing ? 'up' : 'down');
-    window.setTimeout(() => setWheelDirection(null), 180);
-
     setWindows((current) => current.map((window) => {
       if (window.id !== activeWindowId) return window;
       const activeAxis = activationMode === 'sequence' ? sequenceAxis : 'both';
@@ -766,8 +769,6 @@ export default function Home() {
     const bounds = getBounds();
     const growing = deltaY < 0;
     const factor = growing ? 1.1 : 0.9;
-    setWheelDirection(growing ? 'up' : 'down');
-    window.setTimeout(() => setWheelDirection(null), 180);
     setWindows((current) => current.map((window) => {
       if (window.id !== dragState.windowId) return window;
       const width = Math.min(bounds.width, Math.max(MIN_WIDTH, window.rect.width * factor));
@@ -777,7 +778,6 @@ export default function Home() {
       const rect = { x, y, width, height };
       return { ...window, rect, restoreRect: rect };
     }));
-    setHasInteracted(true);
   }, [getBounds]);
 
   useEffect(() => {
@@ -865,7 +865,6 @@ export default function Home() {
     second.restoreRect = second.rect;
     setWindows((current) => [...current, second]);
     setFocusedWindowId('secondary');
-    setHasInteracted(true);
   };
 
   const startTitleDrag = (event: React.PointerEvent<HTMLDivElement>, windowId: WindowId) => {
@@ -957,7 +956,6 @@ export default function Home() {
 
     const nextRect = { x: left, y: top, width: right - left, height: bottom - top };
     updateWindow(resizeState.windowId, (window) => ({ ...window, rect: nextRect, restoreRect: nextRect }));
-    setHasInteracted(true);
   };
 
   const endNativeResize = (event: React.PointerEvent<HTMLElement>) => {
@@ -989,15 +987,16 @@ export default function Home() {
     setTwoClickDirection(direction);
     setTwoClickPhase('resize');
     setActiveWindowId(windowId);
-    setHasInteracted(true);
   };
 
   const focusedWindow = windows.find((window) => window.id === focusedWindowId) ?? windows[0];
   const bounds = monitorBounds;
   const focusedWindowVisible = focusedWindow.mode === 'normal' || focusedWindow.mode === 'maximized';
-  const widthLocked = focusedWindowVisible && Math.abs(focusedWindow.rect.width - bounds.width) < 1;
-  const heightLocked = focusedWindowVisible && Math.abs(focusedWindow.rect.height - bounds.height) < 1;
-  const ratioLabel = `${(focusedWindow.rect.width / focusedWindow.rect.height).toFixed(2)} : 1`;
+  const monitorRatio = monitorPreset === 'portrait' ? 9 / 16 : monitorPreset === 'ultrawide' ? 21 / 9 : 16 / 9;
+  const containedStageSize = useMemo(() => {
+    const width = Math.min(monitorShellBounds.width, monitorShellBounds.height * monitorRatio);
+    return { width, height: width / monitorRatio };
+  }, [monitorRatio, monitorShellBounds]);
 
   const reset = () => {
     const nextBounds = getBounds();
@@ -1014,7 +1013,6 @@ export default function Home() {
     setNativeResizeState(null);
     setHoveredResizeState(null);
     deactivate();
-    setHasInteracted(false);
   };
 
   const chooseActivationMode = (mode: ActivationMode) => {
@@ -1034,13 +1032,6 @@ export default function Home() {
     setMonitorPreset(preset);
     window.localStorage.setItem(MONITOR_PRESET_STORAGE_KEY, preset);
   };
-
-  const lockLabel = useMemo(() => {
-    if (widthLocked && heightLocked) return 'Monitor filled';
-    if (widthLocked) return 'Width locked · height is still fluid';
-    if (heightLocked) return 'Height locked · width is still fluid';
-    return 'Proportional resize';
-  }, [heightLocked, widthLocked]);
 
   const statusLabel = isRecording
     ? 'Recording shortcut'
@@ -1068,8 +1059,8 @@ export default function Home() {
   const visibleWindows = windows.filter((window) => window.mode === 'normal' || window.mode === 'maximized');
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-background text-foreground">
-      <header className="mx-auto flex w-full max-w-[1480px] items-center justify-between px-5 py-5 sm:px-8 lg:px-12">
+    <main className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
+      <header className="mx-auto flex w-full max-w-[1920px] shrink-0 items-center justify-between px-3 py-3 sm:px-4 lg:px-5">
         <a className="flex items-center gap-3" href="#top" aria-label="Scroll Sizer home">
           <span className="grid size-9 place-items-center rounded-xl border border-white/10 bg-white/6 shadow-inner">
             <CornerDownRight className="size-[18px] text-[var(--signal)]" aria-hidden="true" />
@@ -1086,20 +1077,8 @@ export default function Home() {
         </div>
       </header>
 
-      <section id="top" className="mx-auto w-full max-w-[1480px] px-5 pb-12 pt-6 sm:px-8 lg:px-12 lg:pt-10">
-        <div className="mb-7 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.48fr)] lg:items-end">
-          <div>
-            <h1 className="max-w-4xl text-balance text-[clamp(2.5rem,6.2vw,6rem)] font-semibold leading-[0.93] tracking-[-0.065em]">
-              Grab it. Drag it.
-              <span className="block text-white/38">Roll it into shape.</span>
-            </h1>
-          </div>
-          <p className="max-w-xl text-pretty text-base leading-7 text-white/56 sm:text-lg lg:justify-self-end lg:pb-2">
-            Focus a window, use the activator to catch its nearest corner, then move and roll through monitor limits—or resize while dragging its title bar.
-          </p>
-        </div>
-
-        <div className="overflow-hidden rounded-[28px] border border-white/10 bg-[var(--panel)] shadow-[0_30px_100px_rgba(0,0,0,0.38)]">
+      <section id="top" className="mx-auto flex min-h-0 w-full max-w-[1920px] flex-1 px-3 pb-3 sm:px-4 sm:pb-4 lg:px-5 lg:pb-5">
+        <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[22px] border border-white/10 bg-[var(--panel)] shadow-[0_30px_100px_rgba(0,0,0,0.38)]">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/8 px-4 py-3 sm:px-5">
             <div className="flex items-center gap-3">
               <span className={`status-dot ${isActive || isRecording || nativeResizeState || isTitleDragging ? 'is-active' : ''}`} />
@@ -1212,11 +1191,12 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="grid lg:grid-cols-[minmax(0,1fr)_286px]">
-            <div className="monitor-shell p-3 sm:p-5">
+          <div className="min-h-0 flex-1">
+            <div ref={monitorShellRef} className="monitor-shell h-full p-2 sm:p-3">
               <div
                 ref={stageRef}
                 className={`monitor-stage monitor-${monitorPreset} ${isActive ? 'is-active' : ''}`}
+                style={{ width: containedStageSize.width, height: containedStageSize.height }}
                 onPointerMove={(event) => movePointer(event.clientX, event.clientY)}
               >
                 <div className="desktop-light desktop-light-one" />
@@ -1369,64 +1349,10 @@ export default function Home() {
                 </div>
               </div>
             </div>
-
-            <aside className="border-t border-white/8 p-5 lg:border-l lg:border-t-0 lg:p-6">
-              <p className="mb-5 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">Focused window</p>
-              <div className="space-y-4">
-                <Metric label="Title" value={focusedWindow.title} />
-                <Metric label="Window" value={focusedWindowVisible ? `${Math.round(focusedWindow.rect.width)} × ${Math.round(focusedWindow.rect.height)}` : focusedWindow.mode === 'minimized' ? 'Minimized' : 'Closed'} suffix={focusedWindowVisible ? 'px' : undefined} />
-                <Metric label="Aspect ratio" value={ratioLabel} />
-                {activationMode === 'sequence' && <Metric label="Sequence axis" value={SEQUENCE_AXIS_LABELS[sequenceAxis]} accent={isActive} />}
-                {activationMode === 'two-click' && <Metric label="Control phase" value={!isActive ? 'Ready' : twoClickPhase === 'resize' ? 'Opposite point pinned' : 'Positioning window'} accent={isActive} />}
-                <Metric label="Limit state" value={lockLabel} accent={widthLocked || heightLocked} />
-              </div>
-              <div className="my-6 h-px bg-white/8" />
-              <ol className="space-y-4 text-sm">
-                {activationMode === 'two-click' ? (
-                  <>
-                    <Instruction active={!isActive} number="01" title="Activate" detail="Use the shortcut, or double-click any resize handle to pin its opposite side immediately." />
-                    <Instruction active={isActive && twoClickPhase === 'move'} number="02" title="Position + pin" detail="Move the window with the selected corner, then left-click to lock the opposite corner." />
-                    <Instruction active={isActive && twoClickPhase === 'resize'} number="03" title="Resize + finish" detail="Move the cursor to resize from the pinned point. Left-click again to finish." />
-                  </>
-                ) : (
-                  <>
-                    <Instruction active={!isActive && !hasInteracted} number="01" title="Focus" detail="Click the window you want Scroll Sizer to control." />
-                    <Instruction active={isActive && !wheelDirection} number="02" title={activationMode === 'hold' ? 'Hold + drag' : activationMode === 'toggle' ? 'Toggle + drag' : 'Sequence + drag'} detail={activationMode === 'sequence' ? 'Right-click cycles normal, horizontal-only, and vertical-only resizing.' : 'The focused window follows at its current size.'} />
-                    <Instruction active={Boolean(wheelDirection)} number="03" title="Roll" detail={activationMode === 'sequence' && sequenceAxis !== 'both' ? `The wheel changes the ${sequenceAxis} dimension only.` : 'Up grows. Down shrinks at the live ratio.'} />
-                  </>
-                )}
-              </ol>
-              {activationMode === 'two-click' ? (
-                <div className={`wheel-readout click-readout ${isActive ? 'is-ready' : ''}`}>
-                  <MousePointer2 />
-                  <span>{twoClickPhase === 'resize' ? 'Move to resize · click to finish' : 'Shortcut or double-click a handle'}</span>
-                </div>
-              ) : (
-                <div className={`wheel-readout ${isActive || isTitleDragging ? 'is-ready' : ''}`}>
-                  <ArrowUp className={wheelDirection === 'up' ? 'is-lit' : ''} />
-                  <span>mouse wheel</span>
-                  <ArrowDown className={wheelDirection === 'down' ? 'is-lit' : ''} />
-                </div>
-              )}
-              <div className="comparison-note">
-                <strong>{activationMode === 'two-click' ? 'Two-click control' : 'Three ways to work'}</strong>
-                <p>{activationMode === 'two-click'
-                  ? 'Pin the far side, resize directly with the cursor, and confirm when the window feels right.'
-                  : `Pull an edge for freeform resizing, roll while dragging the title bar, or use the ${activationMode} activator on the focused window.`}</p>
-              </div>
-            </aside>
           </div>
         </div>
       </section>
 
     </main>
   );
-}
-
-function Metric({ label, value, suffix, accent = false }: { label: string; value: string; suffix?: string; accent?: boolean }) {
-  return <div className="flex items-start justify-between gap-3"><span className="text-xs text-white/38">{label}</span><span className={`text-right font-mono text-xs ${accent ? 'text-[var(--signal)]' : 'text-white/78'}`}>{value} {suffix && <span className="text-white/35">{suffix}</span>}</span></div>;
-}
-
-function Instruction({ active, number, title, detail }: { active: boolean; number: string; title: string; detail: string }) {
-  return <li className={`instruction ${active ? 'is-active' : ''}`}><span>{number}</span><div><strong>{title}</strong><p>{detail}</p></div></li>;
 }
