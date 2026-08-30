@@ -285,19 +285,101 @@ button, a { -webkit-tap-highlight-color: transparent; }
   position: absolute;
   inset: 0;
   z-index: 8;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
   opacity: 0;
   color: rgba(226,255,241,.7);
   filter: drop-shadow(0 3px 14px rgba(0,0,0,.72)) drop-shadow(0 0 16px rgba(145,246,196,.16));
   transition: opacity 180ms ease, transform 180ms cubic-bezier(.2,.8,.2,1);
 }
-.window-resize-mode svg { width: clamp(78px, 34%, 172px); height: auto; overflow: visible; }
-.window-resize-mode path { stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.window-resize-mode.axis-horizontal svg { width: clamp(92px, 40%, 200px); }
-.window-resize-mode.axis-vertical svg { width: clamp(78px, 30%, 148px); }
+.resize-mode-icon {
+  display: grid;
+  width: clamp(78px, 34%, 172px);
+  aspect-ratio: 1;
+  place-items: center;
+}
+.resize-mode-icon svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.resize-mode-icon.axis-both path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.resize-mode-icon.axis-horizontal { aspect-ratio: 2; }
+.resize-mode-icon.axis-horizontal path,
+.resize-mode-icon.axis-vertical path { fill: currentColor; }
+.window-resize-mode.is-carousel {
+  flex-direction: column;
+  gap: clamp(4px, 2%, 10px);
+  padding: clamp(34px, 9%, 54px) clamp(8px, 3%, 22px) clamp(12px, 4%, 26px);
+}
+.resize-mode-track {
+  display: flex;
+  width: min(100%, 440px);
+  min-height: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.resize-mode-option {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  flex: 1 1 29%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  opacity: .26;
+  transform: scale(.62);
+  transition: opacity 180ms ease, transform 180ms cubic-bezier(.2,.8,.2,1);
+}
+.resize-mode-option.is-current {
+  z-index: 1;
+  flex-basis: 42%;
+  opacity: 1;
+  transform: scale(1);
+}
+.resize-mode-option .resize-mode-icon { width: min(100%, 82px); max-height: calc(100% - 12px); }
+.resize-mode-option.is-current .resize-mode-icon { width: min(100%, 128px); max-height: calc(100% - 15px); }
+.resize-mode-option span {
+  max-width: 100%;
+  overflow: hidden;
+  color: rgba(226,255,241,.58);
+  font-size: clamp(6px, 1.4vw, 9px);
+  font-weight: 650;
+  letter-spacing: .06em;
+  line-height: 1.1;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.resize-mode-option.is-current span {
+  color: rgba(235,255,245,.92);
+  font-size: clamp(8px, 1.7vw, 11px);
+}
+.resize-mode-prompt {
+  flex: 0 0 auto;
+  border: 1px solid rgba(145,246,196,.18);
+  border-radius: 999px;
+  background: rgba(7,12,10,.72);
+  padding: 4px 9px;
+  color: rgba(225,255,239,.68);
+  font-size: clamp(7px, 1.45vw, 10px);
+  font-weight: 600;
+  letter-spacing: .05em;
+  line-height: 1.15;
+  text-align: center;
+  text-transform: uppercase;
+}
 .is-grabbed .window-resize-mode { opacity: .72; }
+.is-grabbed .window-resize-mode.is-carousel { opacity: .9; }
 
 .native-resize-handle {
   position: absolute;

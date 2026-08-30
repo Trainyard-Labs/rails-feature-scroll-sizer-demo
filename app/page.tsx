@@ -72,6 +72,7 @@ const SEQUENCE_AXIS_LABELS: Record<SequenceAxis, string> = {
   horizontal: 'Horizontal only',
   vertical: 'Vertical only',
 };
+const SEQUENCE_AXIS_ORDER: SequenceAxis[] = ['both', 'horizontal', 'vertical'];
 
 function createWindow(id: WindowId): DemoWindow {
   const isPrimary = id === 'primary';
@@ -106,22 +107,74 @@ function resizePointerGlyph(direction: ResizeDirection) {
   return <MoveDiagonal2 aria-hidden="true" />;
 }
 
-function ResizeModeOverlay({ axis }: { axis: SequenceAxis }) {
+function ResizeModeIcon({ axis }: { axis: SequenceAxis }) {
+  if (axis === 'both') {
+    return (
+      <span className="resize-mode-icon axis-both">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M10.5 10.5 5.5 5.5m0 3.75V5.5h3.75m4.25 8 5 5m-3.75 0h3.75v-3.75m-8-1.25-5 5m0-3.75v3.75h3.75m4.25-8 5-5m-3.75 0h3.75v3.75" />
+        </svg>
+      </span>
+    );
+  }
+
+  if (axis === 'horizontal') {
+    return (
+      <span className="resize-mode-icon axis-horizontal">
+        <svg viewBox="0 0 48 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <g transform="translate(24 0) scale(-1 1)">
+            <path d="M13.2328 16.4569C12.9328 16.7426 12.9212 17.2173 13.2069 17.5172C13.4926 17.8172 13.9673 17.8288 14.2672 17.5431L13.2328 16.4569ZM19.5172 12.5431C19.8172 12.2574 19.8288 11.7827 19.5431 11.4828C19.2574 11.1828 18.7827 11.1712 18.4828 11.4569L19.5172 12.5431ZM18.4828 12.5431C18.7827 12.8288 19.2574 12.8172 19.5431 12.5172C19.8288 12.2173 19.8172 11.7426 19.5172 11.4569L18.4828 12.5431ZM14.2672 6.4569C13.9673 6.17123 13.4926 6.18281 13.2069 6.48276C12.9212 6.78271 12.9328 7.25744 13.2328 7.5431L14.2672 6.4569ZM19 12.75C19.4142 12.75 19.75 12.4142 19.75 12C19.75 11.5858 19.4142 11.25 19 11.25V12.75ZM5 11.25C4.58579 11.25 4.25 11.5858 4.25 12C4.25 12.4142 4.58579 12.75 5 12.75V11.25ZM14.2672 17.5431L19.5172 12.5431L18.4828 11.4569L13.2328 16.4569L14.2672 17.5431ZM19.5172 11.4569L14.2672 6.4569L13.2328 7.5431L18.4828 12.5431L19.5172 11.4569ZM19 11.25L5 11.25V12.75L19 12.75V11.25Z" />
+          </g>
+          <g transform="translate(24 0)">
+            <path d="M13.2328 16.4569C12.9328 16.7426 12.9212 17.2173 13.2069 17.5172C13.4926 17.8172 13.9673 17.8288 14.2672 17.5431L13.2328 16.4569ZM19.5172 12.5431C19.8172 12.2574 19.8288 11.7827 19.5431 11.4828C19.2574 11.1828 18.7827 11.1712 18.4828 11.4569L19.5172 12.5431ZM18.4828 12.5431C18.7827 12.8288 19.2574 12.8172 19.5431 12.5172C19.8288 12.2173 19.8172 11.7426 19.5172 11.4569L18.4828 12.5431ZM14.2672 6.4569C13.9673 6.17123 13.4926 6.18281 13.2069 6.48276C12.9212 6.78271 12.9328 7.25744 13.2328 7.5431L14.2672 6.4569ZM19 12.75C19.4142 12.75 19.75 12.4142 19.75 12C19.75 11.5858 19.4142 11.25 19 11.25V12.75ZM5 11.25C4.58579 11.25 4.25 11.5858 4.25 12C4.25 12.4142 4.58579 12.75 5 12.75V11.25ZM14.2672 17.5431L19.5172 12.5431L18.4828 11.4569L13.2328 16.4569L14.2672 17.5431ZM19.5172 11.4569L14.2672 6.4569L13.2328 7.5431L18.4828 12.5431L19.5172 11.4569ZM19 11.25L5 11.25V12.75L19 12.75V11.25Z" />
+          </g>
+        </svg>
+      </span>
+    );
+  }
+
   return (
-    <div className={`window-resize-mode axis-${axis}`} aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        {axis === 'both' && (
-          <path
-            d="M10.5 10.5 5.5 5.5m0 3.75V5.5h3.75m4.25 8 5 5m-3.75 0h3.75v-3.75m-8-1.25-5 5m0-3.75v3.75h3.75m4.25-8 5-5m-3.75 0h3.75v3.75"
-          />
-        )}
-        {axis === 'horizontal' && (
-          <path d="M10.385 12H5m2.684-2.154L5.53 12l2.154 2.154M13.615 12H19m-2.684-2.154L18.47 12l-2.154 2.154" />
-        )}
-        {axis === 'vertical' && (
-          <path d="M12 10.385V5M9.846 7.684 12 5.53l2.154 2.154M12 13.615V19m-2.154-2.684L12 18.47l2.154-2.154" />
-        )}
+    <span className="resize-mode-icon axis-vertical">
+      <svg viewBox="0 0 24 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M6.4569 9.73276C6.17123 10.0327 6.18281 10.5074 6.48276 10.7931C6.78271 11.0788 7.25744 11.0672 7.5431 10.7672L6.4569 9.73276ZM12.5431 5.51724C12.8288 5.21729 12.8172 4.74256 12.5172 4.4569C12.2173 4.17123 11.7426 4.18281 11.4569 4.48276L12.5431 5.51724ZM12.5431 4.48276C12.2574 4.18281 11.7827 4.17123 11.4828 4.4569C11.1828 4.74256 11.1712 5.21729 11.4569 5.51724L12.5431 4.48276ZM16.4569 10.7672C16.7426 11.0672 17.2173 11.0788 17.5172 10.7931C17.8172 10.5074 17.8288 10.0327 17.5431 9.73276L16.4569 10.7672ZM12.75 5C12.75 4.58579 12.4142 4.25 12 4.25C11.5858 4.25 11.25 4.58579 11.25 5H12.75ZM11.25 19C11.25 19.4142 11.5858 19.75 12 19.75C12.4142 19.75 12.75 19.4142 12.75 19H11.25ZM7.5431 10.7672L12.5431 5.51724L11.4569 4.48276L6.4569 9.73276L7.5431 10.7672ZM11.4569 5.51724L16.4569 10.7672L17.5431 9.73276L12.5431 4.48276L11.4569 5.51724ZM11.25 5V19H12.75V5H11.25Z" />
+        <g transform="translate(0 48) scale(1 -1)">
+          <path d="M6.4569 9.73276C6.17123 10.0327 6.18281 10.5074 6.48276 10.7931C6.78271 11.0788 7.25744 11.0672 7.5431 10.7672L6.4569 9.73276ZM12.5431 5.51724C12.8288 5.21729 12.8172 4.74256 12.5172 4.4569C12.2173 4.17123 11.7426 4.18281 11.4569 4.48276L12.5431 5.51724ZM12.5431 4.48276C12.2574 4.18281 11.7827 4.17123 11.4828 4.4569C11.1828 4.74256 11.1712 5.21729 11.4569 5.51724L12.5431 4.48276ZM16.4569 10.7672C16.7426 11.0672 17.2173 11.0788 17.5172 10.7931C17.8172 10.5074 17.8288 10.0327 17.5431 9.73276L16.4569 10.7672ZM12.75 5C12.75 4.58579 12.4142 4.25 12 4.25C11.5858 4.25 11.25 4.58579 11.25 5H12.75ZM11.25 19C11.25 19.4142 11.5858 19.75 12 19.75C12.4142 19.75 12.75 19.4142 12.75 19H11.25ZM7.5431 10.7672L12.5431 5.51724L11.4569 4.48276L6.4569 9.73276L7.5431 10.7672ZM11.4569 5.51724L16.4569 10.7672L17.5431 9.73276L12.5431 4.48276L11.4569 5.51724ZM11.25 5V19H12.75V5H11.25Z" />
+        </g>
       </svg>
+    </span>
+  );
+}
+
+function ResizeModeOverlay({ axis, sequence }: { axis: SequenceAxis; sequence: boolean }) {
+  if (!sequence) {
+    return (
+      <div className="window-resize-mode" aria-hidden="true">
+        <ResizeModeIcon axis="both" />
+      </div>
+    );
+  }
+
+  const currentIndex = SEQUENCE_AXIS_ORDER.indexOf(axis);
+  const previousAxis = SEQUENCE_AXIS_ORDER[(currentIndex + SEQUENCE_AXIS_ORDER.length - 1) % SEQUENCE_AXIS_ORDER.length];
+  const nextAxis = SEQUENCE_AXIS_ORDER[(currentIndex + 1) % SEQUENCE_AXIS_ORDER.length];
+
+  return (
+    <div className="window-resize-mode is-carousel" aria-hidden="true">
+      <div className="resize-mode-track">
+        <div className="resize-mode-option is-previous">
+          <ResizeModeIcon axis={previousAxis} />
+          <span>{SEQUENCE_AXIS_LABELS[previousAxis]}</span>
+        </div>
+        <div className="resize-mode-option is-current">
+          <ResizeModeIcon axis={axis} />
+          <span>{SEQUENCE_AXIS_LABELS[axis]}</span>
+        </div>
+        <div className="resize-mode-option is-next">
+          <ResizeModeIcon axis={nextAxis} />
+          <span>{SEQUENCE_AXIS_LABELS[nextAxis]}</span>
+        </div>
+      </div>
+      <span className="resize-mode-prompt">Right-click to change modes.</span>
     </div>
   );
 }
@@ -1132,7 +1185,7 @@ export default function Home() {
                       </div>
                       {isGrabbed && <span className={`corner-node corner-${corner}`} />}
                       {isGrabbed && <span className={`corner-ring corner-${corner}`} />}
-                      <ResizeModeOverlay axis={activationMode === 'sequence' ? sequenceAxis : 'both'} />
+                      <ResizeModeOverlay axis={activationMode === 'sequence' ? sequenceAxis : 'both'} sequence={activationMode === 'sequence'} />
                       {demoWindow.mode === 'normal' && RESIZE_DIRECTIONS.map((direction) => (
                         <hr
                           key={direction}
@@ -1168,18 +1221,13 @@ export default function Home() {
                   ) : (
                     <MousePointer2 className="size-6 fill-[#08100d] text-white" />
                   )}
-                  {isActive && (
+                  {isActive && activationMode !== 'sequence' && (
                     <span className="pointer-label">
-                      {activationMode === 'sequence'
-                        ? `${SEQUENCE_AXIS_LABELS[sequenceAxis]} · right click cycles`
-                        : activationMode === 'toggle'
-                          ? 'active · click to finish'
-                          : 'drag + roll'}
+                      {activationMode === 'toggle' ? 'active · click to finish' : 'drag + roll'}
                     </span>
                   )}
                 </div>
 
-                {!hasInteracted && visibleWindows.length > 0 && <div className="stage-hint">Click a window to focus · pull an edge or use the activator and roll</div>}
                 {visibleWindows.length === 0 && windows.some((window) => window.mode === 'minimized') && <div className="stage-hint">Windows minimized · click a taskbar icon to restore</div>}
 
                 <div className="taskbar">
