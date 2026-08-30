@@ -5,11 +5,16 @@ import {
   ArrowDown,
   ArrowUp,
   CornerDownRight,
-  Grip,
-  Maximize2,
+  Keyboard,
+  Minus,
+  MoveDiagonal,
+  MoveDiagonal2,
+  MoveHorizontal,
+  MoveVertical,
   MousePointer2,
   RotateCcw,
-  Sparkles,
+  Square,
+  X,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -18,11 +23,59 @@ import { Kbd, KbdGroup } from '@/components/ui/kbd';
 
 type Rect = { x: number; y: number; width: number; height: number };
 type Point = { x: number; y: number };
+type WindowMode = 'normal' | 'maximized' | 'minimized' | 'closed';
+type ResizeDirection = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw';
 
 const MIN_WIDTH = 190;
 const MIN_HEIGHT = 128;
 const INITIAL_RECT: Rect = { x: 102, y: 72, width: 410, height: 274 };
 const CORNERS = ['top left', 'top right', 'bottom left', 'bottom right'];
+const DEFAULT_SHORTCUT = ['Ctrl', 'Shift', 'R'];
+const SHORTCUT_STORAGE_KEY = 'scroll-sizer-demo-shortcut';
+const MODIFIER_ORDER = ['Ctrl', 'Shift', 'Alt', 'Win'];
+const RESIZE_DIRECTIONS: ResizeDirection[] = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'];
+const RESIZE_LABELS: Record<ResizeDirection, string> = {
+  n: 'top edge',
+  ne: 'top-right corner',
+  e: 'right edge',
+  se: 'bottom-right corner',
+  s: 'bottom edge',
+  sw: 'bottom-left corner',
+  w: 'left edge',
+  nw: 'top-left corner',
+};
+
+function resizePointerGlyph(direction: ResizeDirection) {
+  if (direction === 'e' || direction === 'w') return <MoveHorizontal aria-hidden="true" />;
+  if (direction === 'n' || direction === 's') return <MoveVertical aria-hidden="true" />;
+  if (direction === 'ne' || direction === 'sw') return <MoveDiagonal aria-hidden="true" />;
+  return <MoveDiagonal2 aria-hidden="true" />;
+}
+
+function normalizeKey(key: string) {
+  if (key === 'Control') return 'Ctrl';
+  if (key === 'Meta') return 'Win';
+  if (key === ' ') return 'Space';
+  if (key.length === 1) return key.toUpperCase();
+  return key;
+}
+
+function mouseButtonInput(button: number) {
+  if (button === 3) return 'MB4';
+  if (button === 4) return 'MB5';
+  return null;
+}
+
+function sortShortcut(keys: string[]) {
+  return [...keys].sort((left, right) => {
+    const leftIndex = MODIFIER_ORDER.indexOf(left);
+    const rightIndex = MODIFIER_ORDER.indexOf(right);
+    if (leftIndex >= 0 && rightIndex >= 0) return leftIndex - rightIndex;
+    if (leftIndex >= 0) return -1;
+    if (rightIndex >= 0) return 1;
+    return left.localeCompare(right);
+  });
+}
 
 function nearestCorner(rect: Rect, point: Point) {
   const corners = [
@@ -91,7 +144,28 @@ export default function Home() {
   const [corner, setCorner] = useState(3);
   const [wheelDirection, setWheelDirection] = useState<'up' | 'down' | null>(null);
   const [hasInteracted, setHasInteracted] = useState(false);
-  const keyState = useRef({ control: false, shift: false, r: false });
+  const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingKeys, setRecordingKeys] = useState<string[]>([]);
+  const [recordingError, setRecordingError] = useState('');
+  const [windowMode, setWindowMode] = useState<WindowMode>('normal');
+  const [isTitleDragging, setIsTitleDragging] = useState(false);
+  const [nativeResizeDirection, setNativeResizeDirection] = useState<ResizeDirection | null>(null);
+  const [hoveredResizeDirection, setHoveredResizeDirection] = useState<ResizeDirection | null>(null);
+  const heldKeys = useRef(new Set<string>());
+  const capturedKeys = useRef(new Set<string>());
+  const recordingInvalid = useRef(false);
+  const historyGuardInstalled = useRef(false);
+  const restoreRect = useRef<Rect>(INITIAL_RECT);
+  const modeBeforeMinimize = useRef<Exclude<WindowMode, 'minimized' | 'closed'>>('normal');
+  const titleDrag = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
+  const nativeResize = useRef<{
+    pointerId: number;
+    direction: ResizeDirection;
+    startX: number;
+    startY: number;
+    startRect: Rect;
+  } | null>(null);
 
   const getBounds = useCallback(() => {
     const stage = stageRef.current;
@@ -102,45 +176,109 @@ export default function Home() {
   }, []);
 
   const activate = useCallback(() => {
-    if (isActive) return;
+    if (isActive || windowMode === 'minimized' || windowMode === 'closed') return;
     const bounds = getBounds();
-    const selectedCorner = nearestCorner(rect, pointer);
+    const sourceRect = windowMode === 'maximized' ? restoreRect.current : rect;
+    const selectedCorner = nearestCorner(sourceRect, pointer);
     setCorner(selectedCorner);
-    setRect(rectWithCornerAtPointer(rect, pointer, selectedCorner, bounds));
+    setRect(rectWithCornerAtPointer(sourceRect, pointer, selectedCorner, bounds));
+    if (windowMode === 'maximized') setWindowMode('normal');
     setIsActive(true);
     setHasInteracted(true);
-  }, [getBounds, isActive, pointer, rect]);
+  }, [getBounds, isActive, pointer, rect, windowMode]);
 
   const deactivate = useCallback(() => {
     setIsActive(false);
     setWheelDirection(null);
   }, []);
 
+  const saveShortcut = useCallback((inputs: string[]) => {
+    const nextShortcut = sortShortcut(inputs);
+    setShortcut(nextShortcut);
+    window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(nextShortcut));
+    capturedKeys.current.clear();
+    heldKeys.current.clear();
+    setRecordingKeys([]);
+    setRecordingError('');
+    setIsRecording(false);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const savedShortcut = window.localStorage.getItem(SHORTCUT_STORAGE_KEY);
+      if (!savedShortcut) return;
+      const parsed = JSON.parse(savedShortcut);
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed.length <= 3 && parsed.every((key) => typeof key === 'string')) {
+        setShortcut(sortShortcut(parsed));
+      }
+    } catch {
+      window.localStorage.removeItem(SHORTCUT_STORAGE_KEY);
+    }
+  }, []);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Control') keyState.current.control = true;
-      if (event.key === 'Shift') keyState.current.shift = true;
-      if (event.key.toLowerCase() === 'r') keyState.current.r = true;
+      const key = normalizeKey(event.key);
 
-      if (
-        (event.ctrlKey || keyState.current.control) &&
-        (event.shiftKey || keyState.current.shift) &&
-        (event.key.toLowerCase() === 'r' || keyState.current.r)
-      ) {
+      if (isRecording) {
         event.preventDefault();
-        activate();
+        event.stopPropagation();
+        if (key === 'Escape') {
+          capturedKeys.current.clear();
+          heldKeys.current.clear();
+          setRecordingKeys([]);
+          setRecordingError('');
+          setIsRecording(false);
+          return;
+        }
+        if (event.repeat || capturedKeys.current.has(key)) return;
+        if (capturedKeys.current.size >= 3) {
+          recordingInvalid.current = true;
+          setRecordingError('Use up to three keys. Release and try again.');
+          return;
+        }
+        capturedKeys.current.add(key);
+        heldKeys.current.add(key);
+        setRecordingKeys(sortShortcut([...capturedKeys.current]));
+        return;
       }
+
+      heldKeys.current.add(key);
+      if (shortcut.includes(key)) event.preventDefault();
+      if (shortcut.every((shortcutKey) => heldKeys.current.has(shortcutKey))) activate();
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
-      if (event.key === 'Control') keyState.current.control = false;
-      if (event.key === 'Shift') keyState.current.shift = false;
-      if (event.key.toLowerCase() === 'r') keyState.current.r = false;
-      if (!keyState.current.control || !keyState.current.shift || !keyState.current.r) deactivate();
+      const key = normalizeKey(event.key);
+      heldKeys.current.delete(key);
+
+      if (isRecording) {
+        event.preventDefault();
+        event.stopPropagation();
+        const recordedKeyStillHeld = [...capturedKeys.current].some((capturedKey) => heldKeys.current.has(capturedKey));
+        if (recordedKeyStillHeld || capturedKeys.current.size === 0) return;
+
+        if (recordingInvalid.current) {
+          capturedKeys.current.clear();
+          recordingInvalid.current = false;
+          setRecordingKeys([]);
+          return;
+        }
+
+        saveShortcut([...capturedKeys.current]);
+        return;
+      }
+
+      if (!shortcut.every((shortcutKey) => heldKeys.current.has(shortcutKey))) deactivate();
     };
 
     const onBlur = () => {
-      keyState.current = { control: false, shift: false, r: false };
+      heldKeys.current.clear();
+      capturedKeys.current.clear();
+      recordingInvalid.current = false;
+      setRecordingKeys([]);
+      setRecordingError('');
+      setIsRecording(false);
       deactivate();
     };
 
@@ -152,12 +290,105 @@ export default function Home() {
       window.removeEventListener('keyup', onKeyUp, { capture: true });
       window.removeEventListener('blur', onBlur);
     };
-  }, [activate, deactivate]);
+  }, [activate, deactivate, isRecording, saveShortcut, shortcut]);
+
+  useEffect(() => {
+    const consume = (event: MouseEvent | PointerEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      const input = mouseButtonInput(event.button);
+      if (!input || (!isRecording && !shortcut.includes(input))) return;
+      consume(event);
+      heldKeys.current.add(input);
+
+      if (isRecording) {
+        if (capturedKeys.current.has(input)) return;
+        if (capturedKeys.current.size >= 3) {
+          recordingInvalid.current = true;
+          setRecordingError('Use up to three inputs. Release and try again.');
+          return;
+        }
+        capturedKeys.current.add(input);
+        setRecordingKeys(sortShortcut([...capturedKeys.current]));
+        return;
+      }
+
+      if (shortcut.every((shortcutInput) => heldKeys.current.has(shortcutInput))) activate();
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      const input = mouseButtonInput(event.button);
+      if (!input || (!isRecording && !shortcut.includes(input))) return;
+      consume(event);
+      heldKeys.current.delete(input);
+
+      if (isRecording) {
+        const recordedInputStillHeld = [...capturedKeys.current].some((capturedInput) => heldKeys.current.has(capturedInput));
+        if (recordedInputStillHeld || capturedKeys.current.size === 0) return;
+        if (recordingInvalid.current) {
+          capturedKeys.current.clear();
+          recordingInvalid.current = false;
+          setRecordingKeys([]);
+          return;
+        }
+        saveShortcut([...capturedKeys.current]);
+        return;
+      }
+
+      if (!shortcut.every((shortcutInput) => heldKeys.current.has(shortcutInput))) deactivate();
+    };
+
+    const swallowCompatibilityEvent = (event: MouseEvent) => {
+      const input = mouseButtonInput(event.button);
+      if (input && (isRecording || shortcut.includes(input))) consume(event);
+    };
+
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointerup', onPointerUp, true);
+    window.addEventListener('mousedown', swallowCompatibilityEvent, true);
+    window.addEventListener('mouseup', swallowCompatibilityEvent, true);
+    window.addEventListener('auxclick', swallowCompatibilityEvent, true);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('pointerup', onPointerUp, true);
+      window.removeEventListener('mousedown', swallowCompatibilityEvent, true);
+      window.removeEventListener('mouseup', swallowCompatibilityEvent, true);
+      window.removeEventListener('auxclick', swallowCompatibilityEvent, true);
+    };
+  }, [activate, deactivate, isRecording, saveShortcut, shortcut]);
+
+  useEffect(() => {
+    const shouldGuardHistory = isRecording || shortcut.includes('MB4');
+    if (shouldGuardHistory && !historyGuardInstalled.current) {
+      if (!window.history.state?.scrollSizerInputGuard) {
+        window.history.pushState({ ...window.history.state, scrollSizerInputGuard: true }, '', window.location.href);
+      }
+      historyGuardInstalled.current = true;
+    } else if (!shouldGuardHistory && historyGuardInstalled.current) {
+      historyGuardInstalled.current = false;
+      if (window.history.state?.scrollSizerInputGuard) window.history.back();
+    }
+  }, [isRecording, shortcut]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (!historyGuardInstalled.current) return;
+      window.history.pushState({ ...window.history.state, scrollSizerInputGuard: true }, '', window.location.href);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   useEffect(() => {
     const onResize = () => {
       const bounds = getBounds();
       setRect((current) => {
+        if (windowMode === 'maximized') {
+          return { x: 0, y: 0, width: bounds.width, height: Math.max(MIN_HEIGHT, bounds.height - 52) };
+        }
         const width = Math.min(current.width, bounds.width);
         const height = Math.min(current.height, bounds.height);
         return {
@@ -172,7 +403,7 @@ export default function Home() {
     onResize();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [getBounds]);
+  }, [getBounds, windowMode]);
 
   const movePointer = (clientX: number, clientY: number) => {
     const stage = stageRef.current;
@@ -198,7 +429,7 @@ export default function Home() {
     }
   };
 
-  const resizeWithWheel = (deltaY: number) => {
+  const resizeWithWheel = useCallback((deltaY: number) => {
     if (!isActive) return;
     const bounds = getBounds();
     const growing = deltaY < 0;
@@ -212,6 +443,172 @@ export default function Home() {
       const position = positionFromGrab(pointer, corner, width, height, bounds);
       return { ...position, width, height };
     });
+  }, [corner, getBounds, isActive, pointer]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const blockPageScroll = (event: WheelEvent) => {
+      event.preventDefault();
+      if (isActive) resizeWithWheel(event.deltaY);
+    };
+    stage.addEventListener('wheel', blockPageScroll, { passive: false });
+    return () => stage.removeEventListener('wheel', blockPageScroll);
+  }, [isActive, resizeWithWheel]);
+
+  const beginShortcutRecording = () => {
+    deactivate();
+    heldKeys.current.clear();
+    capturedKeys.current.clear();
+    recordingInvalid.current = false;
+    setRecordingKeys([]);
+    setRecordingError('');
+    setIsRecording(true);
+  };
+
+  const toggleMaximize = () => {
+    const stageBounds = getBounds();
+    deactivate();
+    if (windowMode === 'maximized') {
+      const saved = restoreRect.current;
+      const width = Math.min(saved.width, stageBounds.width);
+      const height = Math.min(saved.height, stageBounds.height);
+      setRect({
+        x: Math.max(0, Math.min(stageBounds.width - width, saved.x)),
+        y: Math.max(0, Math.min(stageBounds.height - height, saved.y)),
+        width,
+        height,
+      });
+      setWindowMode('normal');
+      return;
+    }
+
+    restoreRect.current = rect;
+    setRect({ x: 0, y: 0, width: stageBounds.width, height: Math.max(MIN_HEIGHT, stageBounds.height - 52) });
+    setWindowMode('maximized');
+  };
+
+  const minimizeWindow = () => {
+    deactivate();
+    modeBeforeMinimize.current = windowMode === 'maximized' ? 'maximized' : 'normal';
+    setWindowMode('minimized');
+  };
+
+  const restoreMinimizedWindow = () => {
+    if (windowMode !== 'minimized') return;
+    const nextMode = modeBeforeMinimize.current;
+    if (nextMode === 'maximized') {
+      const stageBounds = getBounds();
+      setRect({ x: 0, y: 0, width: stageBounds.width, height: Math.max(MIN_HEIGHT, stageBounds.height - 52) });
+    }
+    setWindowMode(nextMode);
+  };
+
+  const closeWindow = () => {
+    deactivate();
+    setWindowMode('closed');
+  };
+
+  const reopenWindow = () => {
+    const stageBounds = getBounds();
+    const saved = restoreRect.current;
+    const width = Math.min(saved.width, stageBounds.width - 24);
+    const height = Math.min(saved.height, stageBounds.height - 24);
+    setRect({
+      x: Math.max(12, Math.min(stageBounds.width - width - 12, saved.x)),
+      y: Math.max(12, Math.min(stageBounds.height - height - 12, saved.y)),
+      width,
+      height,
+    });
+    setWindowMode('normal');
+  };
+
+  const startTitleDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (windowMode !== 'normal' || isActive) return;
+    const stage = stageRef.current;
+    if (!stage) return;
+    const stageBounds = stage.getBoundingClientRect();
+    titleDrag.current = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - stageBounds.left - rect.x,
+      offsetY: event.clientY - stageBounds.top - rect.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsTitleDragging(true);
+  };
+
+  const moveTitleDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const dragState = titleDrag.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+    const stage = stageRef.current;
+    if (!stage) return;
+    const stageBounds = stage.getBoundingClientRect();
+    const { offsetX, offsetY } = dragState;
+    const pointerX = event.clientX;
+    const pointerY = event.clientY;
+    setRect((current) => ({
+      ...current,
+      x: Math.max(0, Math.min(stageBounds.width - current.width, pointerX - stageBounds.left - offsetX)),
+      y: Math.max(0, Math.min(stageBounds.height - current.height, pointerY - stageBounds.top - offsetY)),
+    }));
+  };
+
+  const endTitleDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (titleDrag.current?.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    titleDrag.current = null;
+    setIsTitleDragging(false);
+  };
+
+  const startNativeResize = (event: React.PointerEvent<HTMLSpanElement>, direction: ResizeDirection) => {
+    if (event.button !== 0 || windowMode !== 'normal' || isActive) return;
+    event.preventDefault();
+    event.stopPropagation();
+    nativeResize.current = {
+      pointerId: event.pointerId,
+      direction,
+      startX: event.clientX,
+      startY: event.clientY,
+      startRect: rect,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setNativeResizeDirection(direction);
+    setHoveredResizeDirection(direction);
+  };
+
+  const moveNativeResize = (event: React.PointerEvent<HTMLSpanElement>) => {
+    const resizeState = nativeResize.current;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    movePointer(event.clientX, event.clientY);
+    const stageBounds = getBounds();
+    const dx = event.clientX - resizeState.startX;
+    const dy = event.clientY - resizeState.startY;
+    const start = resizeState.startRect;
+    let left = start.x;
+    let top = start.y;
+    let right = start.x + start.width;
+    let bottom = start.y + start.height;
+
+    if (resizeState.direction.includes('w')) left = Math.max(0, Math.min(right - MIN_WIDTH, start.x + dx));
+    if (resizeState.direction.includes('e')) right = Math.min(stageBounds.width, Math.max(left + MIN_WIDTH, start.x + start.width + dx));
+    if (resizeState.direction.includes('n')) top = Math.max(0, Math.min(bottom - MIN_HEIGHT, start.y + dy));
+    if (resizeState.direction.includes('s')) bottom = Math.min(stageBounds.height, Math.max(top + MIN_HEIGHT, start.y + start.height + dy));
+
+    const nextRect = { x: left, y: top, width: right - left, height: bottom - top };
+    restoreRect.current = nextRect;
+    setRect(nextRect);
+    setHasInteracted(true);
+  };
+
+  const endNativeResize = (event: React.PointerEvent<HTMLSpanElement>) => {
+    if (nativeResize.current?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    nativeResize.current = null;
+    setNativeResizeDirection(null);
   };
 
   const bounds = getBounds();
@@ -230,6 +627,13 @@ export default function Home() {
       height,
     });
     setPointer({ x: nextBounds.width * 0.72, y: nextBounds.height * 0.74 });
+    restoreRect.current = INITIAL_RECT;
+    titleDrag.current = null;
+    nativeResize.current = null;
+    setWindowMode('normal');
+    setIsTitleDragging(false);
+    setNativeResizeDirection(null);
+    setHoveredResizeDirection(null);
     deactivate();
     setHasInteracted(false);
   };
@@ -240,6 +644,22 @@ export default function Home() {
     if (heightLocked) return 'Height locked · width is still fluid';
     return 'Proportional resize';
   }, [heightLocked, widthLocked]);
+
+  const windowVisible = windowMode === 'normal' || windowMode === 'maximized';
+  const statusLabel = isRecording
+    ? 'Recording shortcut'
+    : windowMode === 'minimized'
+      ? 'Window minimized'
+      : windowMode === 'closed'
+        ? 'Sample window closed'
+        : nativeResizeDirection
+          ? `Standard resize · ${RESIZE_LABELS[nativeResizeDirection]}`
+          : isActive
+            ? `Holding · ${CORNERS[corner]}`
+            : windowMode === 'maximized'
+              ? 'Window maximized'
+              : 'Ready to grab';
+  const pointerResizeDirection = nativeResizeDirection || hoveredResizeDirection;
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-background text-foreground">
@@ -263,10 +683,6 @@ export default function Home() {
       <section id="top" className="mx-auto w-full max-w-[1480px] px-5 pb-12 pt-6 sm:px-8 lg:px-12 lg:pt-10">
         <div className="mb-7 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.48fr)] lg:items-end">
           <div>
-            <div className="mb-4 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--signal)]">
-              <Sparkles className="size-3.5" aria-hidden="true" />
-              One chord. A whole new window.
-            </div>
             <h1 className="max-w-4xl text-balance text-[clamp(2.5rem,6.2vw,6rem)] font-semibold leading-[0.93] tracking-[-0.065em]">
               Grab it. Drag it.
               <span className="block text-white/38">Roll it into shape.</span>
@@ -280,32 +696,79 @@ export default function Home() {
         <div className="overflow-hidden rounded-[28px] border border-white/10 bg-[var(--panel)] shadow-[0_30px_100px_rgba(0,0,0,0.38)]">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/8 px-4 py-3 sm:px-5">
             <div className="flex items-center gap-3">
-              <span className={`status-dot ${isActive ? 'is-active' : ''}`} />
+              <span className={`status-dot ${isActive || isRecording || nativeResizeDirection ? 'is-active' : ''}`} />
               <span className="text-xs font-semibold uppercase tracking-[0.13em] text-white/78">
-                {isActive ? `Holding · ${CORNERS[corner]}` : 'Ready to grab'}
+                {statusLabel}
               </span>
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="hidden items-center gap-2 rounded-lg border border-white/8 bg-black/20 px-2.5 py-1.5 text-[11px] text-white/50 md:flex">
-                <span>Hold</span>
-                <KbdGroup>
-                  <Kbd>Ctrl</Kbd><span>+</span><Kbd>Shift</Kbd><span>+</span><Kbd>R</Kbd>
-                </KbdGroup>
-              </div>
               <Button
-                className={`h-8 touch-none select-none px-3 text-xs ${isActive ? 'bg-[var(--signal)] text-[#07100d] hover:bg-[var(--signal)]' : 'border-white/12 bg-white/6 text-white hover:bg-white/10'}`}
+                className={`h-8 gap-2 border-white/12 px-2.5 text-[11px] text-white hover:bg-white/10 ${isRecording ? 'bg-[var(--signal)]/12' : 'bg-black/20'}`}
                 variant="outline"
-                onClick={() => (isActive ? deactivate() : activate())}
-                aria-pressed={isActive}
+                onClick={beginShortcutRecording}
+                aria-label={`Change shortcut. Current shortcut is ${shortcut.join(' plus ')}`}
               >
-                <Grip data-icon="inline-start" />
-                {isActive ? 'Release activator' : 'Simulate hold'}
+                <Keyboard data-icon="inline-start" />
+                <span className="hidden sm:inline">Shortcut</span>
+                <KbdGroup>
+                  {shortcut.map((key, index) => (
+                    <span className="contents" key={key}>
+                      {index > 0 && <span className="text-white/30">+</span>}
+                      <Kbd>{key}</Kbd>
+                    </span>
+                  ))}
+                </KbdGroup>
               </Button>
+              {shortcut.some((input) => input === 'MB4' || input === 'MB5') && (
+                <span className="input-capture-status" title="The assigned mouse side button is consumed while this page is focused.">
+                  <i />
+                  Browser action captured
+                </span>
+              )}
               <Button aria-label="Reset demo" className="border-white/12 bg-white/6 text-white hover:bg-white/10" onClick={reset} size="icon" variant="outline">
                 <RotateCcw />
               </Button>
             </div>
+
+            {isRecording && (
+              <div className="shortcut-recorder" role="status" aria-live="polite">
+                <div>
+                  <strong>Press your new shortcut</strong>
+                  <p>{recordingError || 'Hold one to three keyboard or side-button inputs, then release to save. Escape cancels.'}</p>
+                </div>
+                <div className="recording-inputs">
+                  <KbdGroup className="min-h-7">
+                    {recordingKeys.length === 0 ? (
+                      <span className="recording-placeholder">Waiting for input…</span>
+                    ) : recordingKeys.map((key, index) => (
+                      <span className="contents" key={key}>
+                        {index > 0 && <span className="text-white/30">+</span>}
+                        <Kbd className="bg-[var(--signal)]/14 text-[var(--signal)]">{key}</Kbd>
+                      </span>
+                    ))}
+                  </KbdGroup>
+                  <div className="side-input-presets">
+                    <button type="button" onClick={() => saveShortcut(['MB4'])}>Use MB4</button>
+                    <button type="button" onClick={() => saveShortcut(['MB5'])}>Use MB5</button>
+                  </div>
+                </div>
+                <Button
+                  className="text-white/45 hover:bg-white/8 hover:text-white"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    capturedKeys.current.clear();
+                    heldKeys.current.clear();
+                    setRecordingKeys([]);
+                    setRecordingError('');
+                    setIsRecording(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            )}
           </div>
 
           <div className="grid lg:grid-cols-[minmax(0,1fr)_286px]">
@@ -314,28 +777,39 @@ export default function Home() {
                 ref={stageRef}
                 className={`monitor-stage ${isActive ? 'is-active' : ''}`}
                 onPointerMove={(event) => movePointer(event.clientX, event.clientY)}
-                onWheel={(event) => {
-                  if (!isActive) return;
-                  event.preventDefault();
-                  resizeWithWheel(event.deltaY);
-                }}
               >
                 <div className="desktop-light desktop-light-one" />
                 <div className="desktop-light desktop-light-two" />
                 <div className="desktop-grid" />
 
-                <div
-                  className={`demo-window ${isActive ? 'is-grabbed' : ''}`}
-                  style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
-                >
-                  <div className="window-bar">
-                    <div className="flex items-center gap-1.5">
-                      <span className="size-2 rounded-full bg-[#f35d67]" />
-                      <span className="size-2 rounded-full bg-[#f5bd4f]" />
-                      <span className="size-2 rounded-full bg-[#48c98a]" />
+                {windowVisible && (
+                  <div
+                    className={`demo-window ${isActive ? 'is-grabbed' : ''} ${isTitleDragging ? 'is-moving' : ''} ${windowMode === 'maximized' ? 'is-maximized' : ''}`}
+                    style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
+                  >
+                  <div
+                    className="window-bar"
+                    onPointerDown={startTitleDrag}
+                    onPointerMove={moveTitleDrag}
+                    onPointerUp={endTitleDrag}
+                    onPointerCancel={endTitleDrag}
+                    onDoubleClick={toggleMaximize}
+                  >
+                    <div className="window-title">
+                      <span className="window-app-icon"><CornerDownRight /></span>
+                      <span>Project Notes</span>
                     </div>
-                    <span className="truncate text-[10px] font-medium tracking-wide text-white/42">project-notes.md</span>
-                    <Maximize2 className="size-3 text-white/28" />
+                    <div className="window-controls" onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
+                      <button type="button" className="window-control" aria-label="Minimize sample window" onClick={minimizeWindow}>
+                        <Minus />
+                      </button>
+                      <button type="button" className="window-control" aria-label={windowMode === 'maximized' ? 'Restore sample window' : 'Maximize sample window'} onClick={toggleMaximize}>
+                        {windowMode === 'maximized' ? <span className="restore-glyph" /> : <Square />}
+                      </button>
+                      <button type="button" className="window-control window-close" aria-label="Close sample window" onClick={closeWindow}>
+                        <X />
+                      </button>
+                    </div>
                   </div>
                   <div className="window-content">
                     <div className="window-sidebar">
@@ -359,21 +833,60 @@ export default function Home() {
                     <line x1="0" y1="0" x2="100%" y2="100%" />
                     <line x1="100%" y1="0" x2="0" y2="100%" />
                   </svg>
-                </div>
+                  {windowMode === 'normal' && RESIZE_DIRECTIONS.map((direction) => (
+                    <span
+                      key={direction}
+                      className={`native-resize-handle resize-${direction}`}
+                      role="separator"
+                      aria-label={`Resize from ${RESIZE_LABELS[direction]}`}
+                      onPointerEnter={() => setHoveredResizeDirection(direction)}
+                      onPointerLeave={() => {
+                        if (!nativeResize.current) setHoveredResizeDirection(null);
+                      }}
+                      onPointerDown={(event) => startNativeResize(event, direction)}
+                      onPointerMove={moveNativeResize}
+                      onPointerUp={endNativeResize}
+                      onPointerCancel={endNativeResize}
+                    />
+                  ))}
+                  </div>
+                )}
 
-                <div className="dimension width-dimension" style={{ left: rect.x + rect.width / 2, top: Math.max(8, rect.y - 24) }}>{Math.round(rect.width)} px</div>
-                <div className="dimension height-dimension" style={{ left: Math.min(bounds.width - 54, rect.x + rect.width + 12), top: rect.y + rect.height / 2 }}>{Math.round(rect.height)} px</div>
+                {windowVisible && <div className="dimension width-dimension" style={{ left: rect.x + rect.width / 2, top: Math.max(8, rect.y - 24) }}>{Math.round(rect.width)} px</div>}
+                {windowVisible && <div className="dimension height-dimension" style={{ left: Math.min(bounds.width - 54, rect.x + rect.width + 12), top: rect.y + rect.height / 2 }}>{Math.round(rect.height)} px</div>}
 
-                <div className={`sim-pointer ${isActive ? 'is-active' : ''}`} style={{ transform: `translate3d(${pointer.x}px, ${pointer.y}px, 0)` }}>
-                  <MousePointer2 className="size-6 fill-[#08100d] text-white" />
+                {windowMode === 'closed' && (
+                  <Button className="reopen-window" onClick={reopenWindow} variant="outline">
+                    <CornerDownRight data-icon="inline-start" />
+                    Open sample window
+                  </Button>
+                )}
+
+                <div className={`sim-pointer ${isActive ? 'is-active' : ''} ${pointerResizeDirection && !isActive ? 'is-native-resize' : ''}`} style={{ transform: `translate3d(${pointer.x}px, ${pointer.y}px, 0)` }}>
+                  {pointerResizeDirection && !isActive ? (
+                    <span className="resize-pointer-glyph">{resizePointerGlyph(pointerResizeDirection)}</span>
+                  ) : (
+                    <MousePointer2 className="size-6 fill-[#08100d] text-white" />
+                  )}
                   {isActive && <span className="pointer-label">drag + roll</span>}
                 </div>
 
-                {!hasInteracted && <div className="stage-hint">Move near a corner, then hold the activator</div>}
+                {!hasInteracted && windowVisible && <div className="stage-hint">Pull any edge for standard resize—or hold the activator and roll</div>}
+                {windowMode === 'minimized' && <div className="stage-hint">Window minimized · click its taskbar icon to restore</div>}
 
-                <div className="taskbar" aria-hidden="true">
+                <div className="taskbar">
                   <span className="windows-mark"><i /><i /><i /><i /></span>
-                  <span className="taskbar-app active" /><span className="taskbar-app" /><span className="taskbar-app" />
+                  {windowMode !== 'closed' && (
+                    <button
+                      type="button"
+                      className={`taskbar-app ${windowMode !== 'minimized' ? 'active' : ''}`}
+                      aria-label={windowMode === 'minimized' ? 'Restore Project Notes' : 'Project Notes is open'}
+                      onClick={restoreMinimizedWindow}
+                    >
+                      <CornerDownRight />
+                    </button>
+                  )}
+                  <span className="taskbar-app" aria-hidden="true" /><span className="taskbar-app" aria-hidden="true" />
                 </div>
               </div>
             </div>
@@ -381,7 +894,7 @@ export default function Home() {
             <aside className="border-t border-white/8 p-5 lg:border-l lg:border-t-0 lg:p-6">
               <p className="mb-5 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">Live geometry</p>
               <div className="space-y-4">
-                <Metric label="Window" value={`${Math.round(rect.width)} × ${Math.round(rect.height)}`} suffix="px" />
+                <Metric label="Window" value={windowVisible ? `${Math.round(rect.width)} × ${Math.round(rect.height)}` : windowMode === 'minimized' ? 'Minimized' : 'Closed'} suffix={windowVisible ? 'px' : undefined} />
                 <Metric label="Aspect ratio" value={ratioLabel} />
                 <Metric label="Limit state" value={lockLabel} accent={widthLocked || heightLocked} />
               </div>
@@ -396,24 +909,15 @@ export default function Home() {
                 <span>mouse wheel</span>
                 <ArrowDown className={wheelDirection === 'down' ? 'is-lit' : ''} />
               </div>
+              <div className="comparison-note">
+                <strong>Compare both methods</strong>
+                <p>Drag any window edge or corner for normal freeform resizing. Hold the activator and use the wheel for Scroll Sizer.</p>
+              </div>
             </aside>
           </div>
         </div>
       </section>
 
-      <section className="border-t border-white/8 bg-[#090c0c]">
-        <div className="mx-auto grid w-full max-w-[1480px] gap-10 px-5 py-14 sm:px-8 lg:grid-cols-[0.75fr_1.25fr] lg:px-12 lg:py-20">
-          <div>
-            <p className="mb-4 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--signal)]">The behavior</p>
-            <h2 className="max-w-lg text-3xl font-semibold leading-tight tracking-[-0.045em] sm:text-4xl">The monitor edge becomes a hinge—not a dead end.</h2>
-          </div>
-          <div className="grid gap-px overflow-hidden rounded-2xl border border-white/8 bg-white/8 sm:grid-cols-3">
-            <FeatureCard number="01" title="Catch" copy="The nearest corner jumps to the pointer while its opposite stays anchored." />
-            <FeatureCard number="02" title="Carry" copy="Keep holding and the whole window moves with the grabbed corner." />
-            <FeatureCard number="03" title="Re-shape" copy="Once a dimension fills the monitor, the other keeps growing. Shrink from the new ratio." />
-          </div>
-        </div>
-      </section>
     </main>
   );
 }
@@ -424,8 +928,4 @@ function Metric({ label, value, suffix, accent = false }: { label: string; value
 
 function Instruction({ active, number, title, detail }: { active: boolean; number: string; title: string; detail: string }) {
   return <li className={`instruction ${active ? 'is-active' : ''}`}><span>{number}</span><div><strong>{title}</strong><p>{detail}</p></div></li>;
-}
-
-function FeatureCard({ number, title, copy }: { number: string; title: string; copy: string }) {
-  return <article className="bg-[#0d1110] p-6 sm:min-h-56 sm:p-7"><span className="font-mono text-[11px] text-[var(--signal)]">{number}</span><h3 className="mb-3 mt-12 text-xl font-semibold tracking-[-0.03em]">{title}</h3><p className="text-sm leading-6 text-white/44">{copy}</p></article>;
 }
