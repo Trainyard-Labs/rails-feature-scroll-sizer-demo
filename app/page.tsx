@@ -27,7 +27,8 @@ type Point = { x: number; y: number };
 type WindowMode = 'normal' | 'maximized' | 'minimized' | 'closed';
 type ResizeDirection = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw';
 type WindowId = 'primary' | 'secondary';
-type ActivationMode = 'hold' | 'toggle' | 'sequence';
+type ActivationMode = 'hold' | 'toggle' | 'sequence' | 'two-click';
+type TwoClickPhase = 'move' | 'resize';
 type SequenceAxis = 'both' | 'horizontal' | 'vertical';
 type MonitorPreset = 'standard' | 'portrait' | 'ultrawide';
 type DemoWindow = {
@@ -50,6 +51,17 @@ const ACTIVATION_MODE_STORAGE_KEY = 'scroll-sizer-demo-activation-mode';
 const MONITOR_PRESET_STORAGE_KEY = 'scroll-sizer-demo-monitor-preset';
 const MODIFIER_ORDER = ['Ctrl', 'Shift', 'Alt', 'Win'];
 const RESIZE_DIRECTIONS: ResizeDirection[] = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'];
+const CORNER_DIRECTIONS: ResizeDirection[] = ['nw', 'ne', 'sw', 'se'];
+const OPPOSITE_RESIZE_DIRECTION: Record<ResizeDirection, ResizeDirection> = {
+  n: 's',
+  ne: 'sw',
+  e: 'w',
+  se: 'nw',
+  s: 'n',
+  sw: 'ne',
+  w: 'e',
+  nw: 'se',
+};
 const RESIZE_LABELS: Record<ResizeDirection, string> = {
   n: 'top edge',
   ne: 'top-right corner',
@@ -261,6 +273,25 @@ function positionFromGrab(
   };
 }
 
+function resizeFromFixedOpposite(
+  pointer: Point,
+  direction: ResizeDirection,
+  start: Rect,
+  bounds: { width: number; height: number },
+): Rect {
+  let left = start.x;
+  let top = start.y;
+  let right = start.x + start.width;
+  let bottom = start.y + start.height;
+
+  if (direction.includes('w')) left = Math.max(0, Math.min(right - MIN_WIDTH, pointer.x));
+  if (direction.includes('e')) right = Math.min(bounds.width, Math.max(left + MIN_WIDTH, pointer.x));
+  if (direction.includes('n')) top = Math.max(0, Math.min(bottom - MIN_HEIGHT, pointer.y));
+  if (direction.includes('s')) bottom = Math.min(bounds.height, Math.max(top + MIN_HEIGHT, pointer.y));
+
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
 export default function Home() {
   const stageRef = useRef<HTMLDivElement>(null);
   const [windows, setWindows] = useState<DemoWindow[]>([createWindow('primary')]);
@@ -274,6 +305,8 @@ export default function Home() {
   const [shortcut, setShortcut] = useState(DEFAULT_SHORTCUT);
   const [activationMode, setActivationMode] = useState<ActivationMode>('hold');
   const [sequenceAxis, setSequenceAxis] = useState<SequenceAxis>('both');
+  const [twoClickPhase, setTwoClickPhase] = useState<TwoClickPhase | null>(null);
+  const [twoClickDirection, setTwoClickDirection] = useState<ResizeDirection | null>(null);
   const [monitorPreset, setMonitorPreset] = useState<MonitorPreset>('standard');
   const [isRecording, setIsRecording] = useState(false);
   const [recordingKeys, setRecordingKeys] = useState<string[]>([]);
@@ -301,6 +334,11 @@ export default function Home() {
     direction: ResizeDirection;
     startX: number;
     startY: number;
+    startRect: Rect;
+  } | null>(null);
+  const twoClickResize = useRef<{
+    windowId: WindowId;
+    direction: ResizeDirection;
     startRect: Rect;
   } | null>(null);
 
@@ -334,10 +372,10 @@ export default function Home() {
   }, []);
 
   const activate = useCallback(() => {
-    if (activeWindowId) return;
+    if (activeWindowId) return false;
     const target = windows.find((window) => window.id === focusedWindowId && (window.mode === 'normal' || window.mode === 'maximized'))
       ?? [...windows].reverse().find((window) => window.mode === 'normal' || window.mode === 'maximized');
-    if (!target) return;
+    if (!target) return false;
     const bounds = getBounds();
     const sourceRect = target.mode === 'maximized' ? target.restoreRect : target.rect;
     const selectedCorner = nearestCorner(sourceRect, pointer);
@@ -347,12 +385,16 @@ export default function Home() {
     setFocusedWindowId(target.id);
     setActiveWindowId(target.id);
     setHasInteracted(true);
+    return true;
   }, [activeWindowId, focusedWindowId, getBounds, pointer, updateWindow, windows]);
 
   const deactivate = useCallback(() => {
     setActiveWindowId(null);
     setWheelDirection(null);
     setSequenceAxis('both');
+    setTwoClickPhase(null);
+    setTwoClickDirection(null);
+    twoClickResize.current = null;
   }, []);
 
   const cycleSequenceAxis = useCallback(() => {
@@ -365,8 +407,21 @@ export default function Home() {
       return;
     }
     if (activationMode === 'sequence') setSequenceAxis('both');
-    activate();
+    if (activate() && activationMode === 'two-click') setTwoClickPhase('move');
   }, [activate, activationMode, deactivate, isActive]);
+
+  const beginTwoClickResizeFromShortcut = useCallback(() => {
+    if (!activeWindowId) return;
+    const target = windows.find((window) => window.id === activeWindowId);
+    if (!target) return;
+    twoClickResize.current = {
+      windowId: target.id,
+      direction: CORNER_DIRECTIONS[corner],
+      startRect: target.rect,
+    };
+    setTwoClickDirection(CORNER_DIRECTIONS[corner]);
+    setTwoClickPhase('resize');
+  }, [activeWindowId, corner, windows]);
 
   const saveShortcut = useCallback((inputs: string[]) => {
     const nextShortcut = sortShortcut(inputs);
@@ -394,7 +449,7 @@ export default function Home() {
         window.localStorage.removeItem(SHORTCUT_STORAGE_KEY);
       }
       const savedMode = window.localStorage.getItem(ACTIVATION_MODE_STORAGE_KEY);
-      if (savedMode === 'hold' || savedMode === 'toggle' || savedMode === 'sequence') setActivationMode(savedMode);
+      if (savedMode === 'hold' || savedMode === 'toggle' || savedMode === 'sequence' || savedMode === 'two-click') setActivationMode(savedMode);
       const savedMonitor = window.localStorage.getItem(MONITOR_PRESET_STORAGE_KEY);
       if (savedMonitor === 'standard' || savedMonitor === 'portrait' || savedMonitor === 'ultrawide') setMonitorPreset(savedMonitor);
     });
@@ -491,6 +546,13 @@ export default function Home() {
     };
 
     const onPointerDown = (event: PointerEvent) => {
+      if (event.button === 0 && !isRecording && activationMode === 'two-click' && isActive) {
+        consume(event);
+        suppressNextClick.current = true;
+        if (twoClickPhase === 'move') beginTwoClickResizeFromShortcut();
+        else deactivate();
+        return;
+      }
       if (event.button === 0 && !isRecording && activationMode !== 'hold' && isActive) {
         consume(event);
         suppressNextClick.current = true;
@@ -581,7 +643,7 @@ export default function Home() {
       window.removeEventListener('click', onClick, true);
       window.removeEventListener('contextmenu', onContextMenu, true);
     };
-  }, [activationMode, cycleSequenceAxis, deactivate, isActive, isRecording, saveShortcut, shortcut, triggerShortcut]);
+  }, [activationMode, beginTwoClickResizeFromShortcut, cycleSequenceAxis, deactivate, isActive, isRecording, saveShortcut, shortcut, triggerShortcut, twoClickPhase]);
 
   useEffect(() => {
     const shouldGuardHistory = isRecording || shortcut.includes('MB4');
@@ -645,6 +707,16 @@ export default function Home() {
     if (activeWindowId) {
       setWindows((current) => current.map((window) => {
         if (window.id !== activeWindowId) return window;
+        const anchoredResize = twoClickResize.current;
+        if (activationMode === 'two-click' && twoClickPhase === 'resize' && anchoredResize?.windowId === window.id) {
+          const rect = resizeFromFixedOpposite(
+            nextPointer,
+            anchoredResize.direction,
+            anchoredResize.startRect,
+            { width: stageBounds.width, height: stageBounds.height },
+          );
+          return { ...window, rect, restoreRect: rect };
+        }
         const position = positionFromGrab(
           nextPointer,
           corner,
@@ -713,12 +785,12 @@ export default function Home() {
     if (!stage) return;
     const blockPageScroll = (event: WheelEvent) => {
       event.preventDefault();
-      if (activeWindowId) resizeWithWheel(event.deltaY);
+      if (activeWindowId && activationMode !== 'two-click') resizeWithWheel(event.deltaY);
       else if (titleDrag.current) resizeTitleDragWithWheel(event.deltaY);
     };
     stage.addEventListener('wheel', blockPageScroll, { passive: false });
     return () => stage.removeEventListener('wheel', blockPageScroll);
-  }, [activeWindowId, resizeTitleDragWithWheel, resizeWithWheel]);
+  }, [activationMode, activeWindowId, resizeTitleDragWithWheel, resizeWithWheel]);
 
   const beginShortcutRecording = () => {
     deactivate();
@@ -897,6 +969,29 @@ export default function Home() {
     setNativeResizeState(null);
   };
 
+  const startTwoClickResizeFromHandle = (event: React.MouseEvent<HTMLElement>, windowId: WindowId, direction: ResizeDirection) => {
+    if (activationMode !== 'two-click' || isActive) return;
+    const demoWindow = windows.find((window) => window.id === windowId);
+    const stage = stageRef.current;
+    if (!demoWindow || demoWindow.mode !== 'normal' || !stage) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const stageBounds = stage.getBoundingClientRect();
+    const nextPointer = {
+      x: Math.max(0, Math.min(stageBounds.width, event.clientX - stageBounds.left)),
+      y: Math.max(0, Math.min(stageBounds.height, event.clientY - stageBounds.top)),
+    };
+    nativeResize.current = null;
+    setNativeResizeState(null);
+    setPointer(nextPointer);
+    setFocusedWindowId(windowId);
+    twoClickResize.current = { windowId, direction, startRect: demoWindow.rect };
+    setTwoClickDirection(direction);
+    setTwoClickPhase('resize');
+    setActiveWindowId(windowId);
+    setHasInteracted(true);
+  };
+
   const focusedWindow = windows.find((window) => window.id === focusedWindowId) ?? windows[0];
   const bounds = monitorBounds;
   const focusedWindowVisible = focusedWindow.mode === 'normal' || focusedWindow.mode === 'maximized';
@@ -956,7 +1051,11 @@ export default function Home() {
         : isActive
           ? activationMode === 'sequence'
             ? `Sequence · ${SEQUENCE_AXIS_LABELS[sequenceAxis]}`
-            : `${activationMode === 'toggle' ? 'Toggled on' : 'Holding'} · ${CORNERS[corner]}`
+            : activationMode === 'two-click'
+              ? twoClickPhase === 'resize'
+                ? `Pinned resize · ${RESIZE_LABELS[twoClickDirection ?? CORNER_DIRECTIONS[corner]]}`
+                : `Positioning · ${CORNERS[corner]}`
+              : `${activationMode === 'toggle' ? 'Toggled on' : 'Holding'} · ${CORNERS[corner]}`
           : focusedWindow.mode === 'minimized'
             ? `${focusedWindow.title} minimized`
             : focusedWindow.mode === 'closed'
@@ -964,7 +1063,8 @@ export default function Home() {
               : focusedWindow.mode === 'maximized'
                 ? `${focusedWindow.title} maximized`
                 : `${focusedWindow.title} focused`;
-  const pointerResizeDirection = nativeResizeState?.direction || hoveredResizeState?.direction || null;
+  const isTwoClickResizing = activationMode === 'two-click' && isActive && twoClickPhase === 'resize';
+  const pointerResizeDirection = (isTwoClickResizing ? twoClickDirection : null) || nativeResizeState?.direction || hoveredResizeState?.direction || null;
   const visibleWindows = windows.filter((window) => window.mode === 'normal' || window.mode === 'maximized');
 
   return (
@@ -1080,7 +1180,7 @@ export default function Home() {
               <div className="demo-option-group">
                 <span>Activation</span>
                 <div className="demo-segmented">
-                  {(['hold', 'toggle', 'sequence'] as ActivationMode[]).map((mode) => (
+                  {(['hold', 'toggle', 'sequence', 'two-click'] as ActivationMode[]).map((mode) => (
                     <button
                       type="button"
                       key={mode}
@@ -1088,7 +1188,7 @@ export default function Home() {
                       className={activationMode === mode ? 'is-selected' : ''}
                       onClick={() => chooseActivationMode(mode)}
                     >
-                      {mode === 'hold' ? 'Hold' : mode === 'toggle' ? 'Toggle' : 'Sequence'}
+                      {mode === 'hold' ? 'Hold' : mode === 'toggle' ? 'Toggle' : mode === 'sequence' ? 'Sequence' : 'Two-click'}
                     </button>
                   ))}
                 </div>
@@ -1127,6 +1227,9 @@ export default function Home() {
                   const isFocused = focusedWindowId === demoWindow.id;
                   const isGrabbed = activeWindowId === demoWindow.id;
                   const isMoving = titleDraggingWindowId === demoWindow.id;
+                  const anchoredDirection = isGrabbed && activationMode === 'two-click' && twoClickPhase === 'resize'
+                    ? twoClickDirection
+                    : null;
                   return (
                     <div
                       key={demoWindow.id}
@@ -1188,14 +1291,20 @@ export default function Home() {
                           </div>
                         </div>
                       </div>
-                      {isGrabbed && <span className={`corner-node corner-${corner}`} />}
-                      {isGrabbed && <span className={`corner-ring corner-${corner}`} />}
+                      {isGrabbed && !anchoredDirection && <span className={`corner-node corner-${corner}`} />}
+                      {isGrabbed && !anchoredDirection && <span className={`corner-ring corner-${corner}`} />}
+                      {anchoredDirection && <span className={`two-click-point is-controlled point-${anchoredDirection}`} />}
+                      {anchoredDirection && <span className={`two-click-point is-anchored point-${OPPOSITE_RESIZE_DIRECTION[anchoredDirection]}`} />}
                       <ResizeModeOverlay axis={activationMode === 'sequence' ? sequenceAxis : 'both'} sequence={activationMode === 'sequence'} />
                       {demoWindow.mode === 'normal' && RESIZE_DIRECTIONS.map((direction) => (
-                        <hr
+                        <button
+                          type="button"
+                          tabIndex={-1}
                           key={direction}
                           className={`native-resize-handle resize-${direction}`}
-                          aria-label={`Resize ${demoWindow.title} from ${RESIZE_LABELS[direction]}`}
+                          aria-label={activationMode === 'two-click'
+                            ? `Resize ${demoWindow.title} from ${RESIZE_LABELS[direction]}. Double-click for two-click resize.`
+                            : `Resize ${demoWindow.title} from ${RESIZE_LABELS[direction]}`}
                           onPointerEnter={() => setHoveredResizeState({ windowId: demoWindow.id, direction })}
                           onPointerLeave={() => {
                             if (!nativeResize.current) setHoveredResizeState(null);
@@ -1204,6 +1313,7 @@ export default function Home() {
                           onPointerMove={moveNativeResize}
                           onPointerUp={endNativeResize}
                           onPointerCancel={endNativeResize}
+                          onDoubleClick={(event) => startTwoClickResizeFromHandle(event, demoWindow.id, direction)}
                         />
                       ))}
                     </div>
@@ -1220,15 +1330,17 @@ export default function Home() {
                   </Button>
                 )}
 
-                <div className={`sim-pointer ${isActive ? 'is-active' : ''} ${pointerResizeDirection && !isActive ? 'is-native-resize' : ''} ${isTitleDragging ? 'is-hidden' : ''}`} style={{ transform: `translate3d(${pointer.x}px, ${pointer.y}px, 0)` }}>
-                  {pointerResizeDirection && !isActive && !isTitleDragging ? (
+                <div className={`sim-pointer ${isActive ? 'is-active' : ''} ${pointerResizeDirection && (!isActive || isTwoClickResizing) ? 'is-native-resize' : ''} ${isTitleDragging ? 'is-hidden' : ''}`} style={{ transform: `translate3d(${pointer.x}px, ${pointer.y}px, 0)` }}>
+                  {pointerResizeDirection && (!isActive || isTwoClickResizing) && !isTitleDragging ? (
                     <span className="resize-pointer-glyph">{resizePointerGlyph(pointerResizeDirection)}</span>
                   ) : (
                     <MousePointer2 className="size-6 fill-[#08100d] text-white" />
                   )}
                   {isActive && activationMode !== 'sequence' && (
                     <span className="pointer-label">
-                      {activationMode === 'toggle' ? 'active · click to finish' : 'drag + roll'}
+                      {activationMode === 'two-click'
+                        ? twoClickPhase === 'resize' ? 'opposite pinned · click to finish' : 'move · click to pin'
+                        : activationMode === 'toggle' ? 'active · click to finish' : 'drag + roll'}
                     </span>
                   )}
                 </div>
@@ -1265,22 +1377,42 @@ export default function Home() {
                 <Metric label="Window" value={focusedWindowVisible ? `${Math.round(focusedWindow.rect.width)} × ${Math.round(focusedWindow.rect.height)}` : focusedWindow.mode === 'minimized' ? 'Minimized' : 'Closed'} suffix={focusedWindowVisible ? 'px' : undefined} />
                 <Metric label="Aspect ratio" value={ratioLabel} />
                 {activationMode === 'sequence' && <Metric label="Sequence axis" value={SEQUENCE_AXIS_LABELS[sequenceAxis]} accent={isActive} />}
+                {activationMode === 'two-click' && <Metric label="Control phase" value={!isActive ? 'Ready' : twoClickPhase === 'resize' ? 'Opposite point pinned' : 'Positioning window'} accent={isActive} />}
                 <Metric label="Limit state" value={lockLabel} accent={widthLocked || heightLocked} />
               </div>
               <div className="my-6 h-px bg-white/8" />
               <ol className="space-y-4 text-sm">
-                <Instruction active={!isActive && !hasInteracted} number="01" title="Focus" detail="Click the window you want Scroll Sizer to control." />
-                <Instruction active={isActive && !wheelDirection} number="02" title={activationMode === 'hold' ? 'Hold + drag' : activationMode === 'toggle' ? 'Toggle + drag' : 'Sequence + drag'} detail={activationMode === 'sequence' ? 'Right-click cycles normal, horizontal-only, and vertical-only resizing.' : 'The focused window follows at its current size.'} />
-                <Instruction active={Boolean(wheelDirection)} number="03" title="Roll" detail={activationMode === 'sequence' && sequenceAxis !== 'both' ? `The wheel changes the ${sequenceAxis} dimension only.` : 'Up grows. Down shrinks at the live ratio.'} />
+                {activationMode === 'two-click' ? (
+                  <>
+                    <Instruction active={!isActive} number="01" title="Activate" detail="Use the shortcut, or double-click any resize handle to pin its opposite side immediately." />
+                    <Instruction active={isActive && twoClickPhase === 'move'} number="02" title="Position + pin" detail="Move the window with the selected corner, then left-click to lock the opposite corner." />
+                    <Instruction active={isActive && twoClickPhase === 'resize'} number="03" title="Resize + finish" detail="Move the cursor to resize from the pinned point. Left-click again to finish." />
+                  </>
+                ) : (
+                  <>
+                    <Instruction active={!isActive && !hasInteracted} number="01" title="Focus" detail="Click the window you want Scroll Sizer to control." />
+                    <Instruction active={isActive && !wheelDirection} number="02" title={activationMode === 'hold' ? 'Hold + drag' : activationMode === 'toggle' ? 'Toggle + drag' : 'Sequence + drag'} detail={activationMode === 'sequence' ? 'Right-click cycles normal, horizontal-only, and vertical-only resizing.' : 'The focused window follows at its current size.'} />
+                    <Instruction active={Boolean(wheelDirection)} number="03" title="Roll" detail={activationMode === 'sequence' && sequenceAxis !== 'both' ? `The wheel changes the ${sequenceAxis} dimension only.` : 'Up grows. Down shrinks at the live ratio.'} />
+                  </>
+                )}
               </ol>
-              <div className={`wheel-readout ${isActive || isTitleDragging ? 'is-ready' : ''}`}>
-                <ArrowUp className={wheelDirection === 'up' ? 'is-lit' : ''} />
-                <span>mouse wheel</span>
-                <ArrowDown className={wheelDirection === 'down' ? 'is-lit' : ''} />
-              </div>
+              {activationMode === 'two-click' ? (
+                <div className={`wheel-readout click-readout ${isActive ? 'is-ready' : ''}`}>
+                  <MousePointer2 />
+                  <span>{twoClickPhase === 'resize' ? 'Move to resize · click to finish' : 'Shortcut or double-click a handle'}</span>
+                </div>
+              ) : (
+                <div className={`wheel-readout ${isActive || isTitleDragging ? 'is-ready' : ''}`}>
+                  <ArrowUp className={wheelDirection === 'up' ? 'is-lit' : ''} />
+                  <span>mouse wheel</span>
+                  <ArrowDown className={wheelDirection === 'down' ? 'is-lit' : ''} />
+                </div>
+              )}
               <div className="comparison-note">
-                <strong>Three ways to work</strong>
-                <p>Pull an edge for freeform resizing, roll while dragging the title bar, or use the {activationMode} activator on the focused window.</p>
+                <strong>{activationMode === 'two-click' ? 'Two-click control' : 'Three ways to work'}</strong>
+                <p>{activationMode === 'two-click'
+                  ? 'Pin the far side, resize directly with the cursor, and confirm when the window feels right.'
+                  : `Pull an edge for freeform resizing, roll while dragging the title bar, or use the ${activationMode} activator on the focused window.`}</p>
               </div>
             </aside>
           </div>
