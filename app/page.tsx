@@ -967,7 +967,7 @@ export default function Home() {
     setNativeResizeState(null);
   };
 
-  const startTwoClickResizeFromHandle = (event: React.MouseEvent<HTMLElement>, windowId: WindowId, direction: ResizeDirection) => {
+  const startTwoClickResizeFromHandle = (event: React.MouseEvent<HTMLElement>, windowId: WindowId) => {
     if (activationMode !== 'two-click' || isActive) return;
     const demoWindow = windows.find((window) => window.id === windowId);
     const stage = stageRef.current;
@@ -979,13 +979,22 @@ export default function Home() {
       x: Math.max(0, Math.min(stageBounds.width, event.clientX - stageBounds.left)),
       y: Math.max(0, Math.min(stageBounds.height, event.clientY - stageBounds.top)),
     };
+    const selectedCorner = nearestCorner(demoWindow.rect, nextPointer);
+    const nextRect = rectWithCornerAtPointer(
+      demoWindow.rect,
+      nextPointer,
+      selectedCorner,
+      { width: stageBounds.width, height: stageBounds.height },
+    );
     nativeResize.current = null;
+    twoClickResize.current = null;
     setNativeResizeState(null);
     setPointer(nextPointer);
+    setCorner(selectedCorner);
     setFocusedWindowId(windowId);
-    twoClickResize.current = { windowId, direction, startRect: demoWindow.rect };
-    setTwoClickDirection(direction);
-    setTwoClickPhase('resize');
+    setTwoClickDirection(null);
+    updateWindow(windowId, (window) => ({ ...window, rect: nextRect, restoreRect: nextRect }));
+    setTwoClickPhase('move');
     setActiveWindowId(windowId);
   };
 
@@ -1283,7 +1292,7 @@ export default function Home() {
                           key={direction}
                           className={`native-resize-handle resize-${direction}`}
                           aria-label={activationMode === 'two-click'
-                            ? `Resize ${demoWindow.title} from ${RESIZE_LABELS[direction]}. Double-click for two-click resize.`
+                            ? `Resize ${demoWindow.title} from ${RESIZE_LABELS[direction]}. Double-click to start two-click control.`
                             : `Resize ${demoWindow.title} from ${RESIZE_LABELS[direction]}`}
                           onPointerEnter={() => setHoveredResizeState({ windowId: demoWindow.id, direction })}
                           onPointerLeave={() => {
@@ -1293,7 +1302,7 @@ export default function Home() {
                           onPointerMove={moveNativeResize}
                           onPointerUp={endNativeResize}
                           onPointerCancel={endNativeResize}
-                          onDoubleClick={(event) => startTwoClickResizeFromHandle(event, demoWindow.id, direction)}
+                          onDoubleClick={(event) => startTwoClickResizeFromHandle(event, demoWindow.id)}
                         />
                       ))}
                     </div>
